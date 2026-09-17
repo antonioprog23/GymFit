@@ -1,0 +1,22 @@
+# Android Studio and local machine settings
+.idea/
+*.iml
+local.properties
+
+# Gradle, Kotlin and generated build files
+.gradle/
+.kotlin/
+**/build/
+
+# Generated packages and exports
+outputs/
+*.apk
+*.aab
+
+# Local workbook generation tools and reference data
+workbook_tools/
+
+# Temporary files
+*.log
+.DS_Store
+Thumbs.db

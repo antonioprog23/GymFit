@@ -1,0 +1,9 @@
+<resources>
+    <color name="navy">#1B2937</color>
+    <color name="blue">#BE3A41</color>
+    <color name="surface">#F8FBFE</color>
+    <color name="white">#FFFFFF</color>
+    <color name="text_primary">#1B2937</color>
+    <color name="text_secondary">#596A7C</color>
+    <color name="green">#18845C</color>
+</resources>
