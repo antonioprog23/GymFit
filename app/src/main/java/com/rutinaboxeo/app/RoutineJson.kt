@@ -7,6 +7,7 @@ import org.json.JSONObject
 internal object RoutineJson {
     /** Serializa un plan completo para almacenarlo en preferencias. */
     fun encodePlan(plan: RoutinePlan): String = JSONObject()
+        .put("month", plan.month?.toString() ?: "")
         .put("exercises", JSONArray().apply { plan.exercises.forEach { put(it.toJson()) } })
         .put("sessions", JSONObject().apply {
             plan.sessions.forEach { (day, info) -> put(day, info.toJson()) }
@@ -25,7 +26,7 @@ internal object RoutineJson {
             }
         }
         val morning = root?.optJSONArray("morning")?.objects()?.map(::morningFromJson)?.toList().orEmpty()
-        RoutinePlan(exercises, sessions, morning)
+        RoutinePlan(exercises, sessions, morning, root?.optString("month")?.takeIf { it.isNotBlank() }?.let(java.time.YearMonth::parse))
     }.getOrNull()
 
     /** Serializa el progreso indexado por la clave estable de cada ejercicio. */

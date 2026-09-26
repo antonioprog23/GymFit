@@ -1,4 +1,10 @@
 <resources>
+    <color name="card_surface">#FFFFFF</color>
+    <color name="selected_surface">#FFF9F9</color>
+    <color name="completed_surface">#EEF9F4</color>
+    <color name="badge_surface">#FAEFF1</color>
+    <color name="strong_border">#ADBFCF</color>
+    <color name="on_accent">#FFFFFF</color>
     <color name="navy">#1B2937</color>
     <color name="brand_red">#BE3A41</color>
     <color name="surface">#F8FBFE</color>

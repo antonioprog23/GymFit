@@ -38,6 +38,7 @@ object XlsxRoutineParser {
         val sessions = mutableMapOf<String, SessionInfo>()
         val morning = mutableListOf<Pair<Int, MorningStep>>()
         var morningSheetFound = false
+        var month: java.time.YearMonth? = null
 
         sheets.forEach { (name, rId) ->
             val target = rels[rId] ?: return@forEach
@@ -47,6 +48,14 @@ object XlsxRoutineParser {
 
             val week = weekName.find(name)?.groupValues?.get(1)?.toIntOrNull()
             when {
+                name.equals("Periodo", true) -> {
+                    val monthValue = rows.firstOrNull { it[0] == "Mes" }?.get(1)?.toDoubleOrNull()?.toInt()
+                    val yearValue = rows.firstOrNull { it[0] == "Año" }?.get(1)?.toDoubleOrNull()?.toInt()
+                    require(monthValue != null && monthValue in 1..12 && yearValue != null && yearValue in 1900..9999) {
+                        "La hoja Periodo necesita Mes (1–12) y Año (1900–9999)"
+                    }
+                    month = java.time.YearMonth.of(yearValue, monthValue)
+                }
                 name.equals("Mañana", true) || name.equals("Manana", true) -> {
                     morningSheetFound = true
                     rows.forEach morningRow@{ row ->
@@ -79,7 +88,8 @@ object XlsxRoutineParser {
                             result += RoutineExercise(
                                 week = week, day = day, block = row[1].orEmpty(), exercise = exercise,
                                 series = row[3].orEmpty(), reps = row[4].orEmpty(), rest = row[5].orEmpty(), order = order++,
-                                instruction = row[10].orEmpty(), videoUrl = VideoLinks.clean(row[11].orEmpty())
+                                instruction = row[10].orEmpty(), videoUrl = VideoLinks.clean(row[11].orEmpty()),
+                                note = row[12].orEmpty()
                             )
                         }
                     }
@@ -140,7 +150,7 @@ object XlsxRoutineParser {
         return RoutinePlan(
             enriched.sortedWith(compareBy<RoutineExercise> { it.week }.thenBy { dayIndex(it.day) }.thenBy { it.order }),
             sessions,
-            morning.sortedBy { it.first }.map { it.second }
+            morning.sortedBy { it.first }.map { it.second }, month
         )
     }
 

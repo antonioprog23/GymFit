@@ -58,7 +58,9 @@ data class RoutinePlan(
     /** Información de sesión indexada por día de la semana. */
     val sessions: Map<String, SessionInfo> = emptyMap(),
     /** Pasos ordenados de la rutina de mañana. */
-    val morningSteps: List<MorningStep> = emptyList()
+    val morningSteps: List<MorningStep> = emptyList(),
+    /** Mes indicado en la hoja Periodo; vacío para plantillas antiguas. */
+    val month: java.time.YearMonth? = null
 ) {
     /** Ejercicios indexados una vez para evitar filtros repetidos al dibujar pantallas. */
     private val exercisesBySession by lazy(LazyThreadSafetyMode.NONE) {

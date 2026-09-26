@@ -1,3 +1,5 @@
 <resources>
+    <string name="activate_light_theme">Activar tema claro</string>
+    <string name="activate_dark_theme">Activar tema oscuro</string>
     <string name="app_name">GymFit</string>
 </resources>
