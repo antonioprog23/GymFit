@@ -3,6 +3,7 @@
 Aplicación Android nativa y local para seguir una rutina de boxeo y gimnasio a partir de una plantilla Excel `.xlsx`.
 
 ## Funciones
+
 - Pantalla **Hoy**: separa una rutina guiada de movilidad matinal de 15 minutos y el entrenamiento de tarde.
 - Rutina de mañana cargada desde la hoja `Mañana` del Excel, con temporizador, pausa y registro de finalización diaria.
 - Pantalla **Rutina**: permite elegir semana y día manualmente.
@@ -27,7 +28,9 @@ La duración total se calcula en la hoja. Puedes cambiar los pasos y su duració
 Hoja `Inicio`:
 
 A Día | B Sesión | C Objetivo | D Notas
+
 Hojas `Semana 1` a `Semana 4`:
+
 A Día | B Bloque | C Ejercicio | D Series | E Reps/tiempo | F Descanso
 
 Hoja `Recuperación`:
@@ -37,7 +40,24 @@ Hoja `Alternativas`:
 A Ejercicio principal | B Alternativa 1 | C Alternativa 2 | D Nota
 
 ## Semana activa
+
 En la pantalla `Rutina`, selecciona la semana en la que estás entrenando. Esa selección se guarda y la pantalla `Hoy` la utiliza automáticamente.
 
+## Organización del código
+
+- `MainActivity`: navegación y coordinación de los flujos de mañana, tarde, progreso y plantilla.
+- `ui/GymFitActivity`: paleta y componentes visuales reutilizables.
+- `Models`, `ExerciseFlow`, `ExerciseTiming` y `ExerciseGuide`: modelos y reglas de dominio sin dependencias de interfaz.
+- `XlsxRoutineParser` y `VideoLinks`: importación validada y segura de la plantilla.
+- `RoutineStore` y `RoutineJson`: persistencia local y serialización, separadas para mantener responsabilidades claras.
+- `src/test`: pruebas de temporización, transiciones, importación, migración y consultas del plan.
+
 ## Compilar APK
+
 Abrir el proyecto en Android Studio y usar **Build > Build APK(s)**, o ejecutar `gradlew.bat :app:assembleDebug` en Windows.
+
+Para ejecutar todas las comprobaciones locales:
+
+```powershell
+gradlew.bat testDebugUnitTest lintDebug
+```
