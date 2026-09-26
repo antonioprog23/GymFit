@@ -3,11 +3,16 @@ package com.rutinaboxeo.app
 import android.app.AlertDialog
 import android.content.Intent
 import android.content.res.ColorStateList
+import android.content.res.Configuration
+import androidx.appcompat.widget.AppCompatImageButton
+import androidx.core.view.WindowInsetsControllerCompat
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.os.CountDownTimer
+import android.os.Handler
+import android.os.Looper
 import android.text.InputType
 import android.view.Gravity
 import android.view.View
@@ -19,6 +24,10 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import android.widget.NumberPicker
+import androidx.core.widget.doAfterTextChanged
+import java.time.YearMonth
+import java.time.LocalDate
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.FileProvider
 import com.rutinaboxeo.app.ui.GymFitActivity
@@ -38,6 +47,16 @@ class MainActivity : GymFitActivity() {
     private var plan = RoutinePlan(emptyList())
     /** Progreso local cargado bajo demanda. */
     private val progress by lazy { RoutineStore.loadProgress(this) }
+    /** Repositorio de documentos mensuales en almacenamiento privado. */
+    private val monthly by lazy { RoutineStore.monthly(this) }
+    /** Instantánea pendiente de descarga, conservada en caché ante recreaciones. */
+    private val pendingWorkbook: File get() = File(cacheDir, "pending-export.xlsx")
+    /** Impide editar sesiones cerradas hasta iniciar explícitamente una repetición. */
+    private var sessionReadOnly = false
+    /** Agrupa pulsaciones próximas para evitar escribir un archivo por cada carácter. */
+    private val autosaveHandler = Handler(Looper.getMainLooper())
+    /** Guarda los campos editados tras una pausa breve de escritura. */
+    private val autosave = Runnable { saveSessionFields() }
     /** Semana elegida en las vistas de rutina y hoy. */
     private var selectedWeek = 1
     /** Página que controla el contenido y el estado de la navegación. */
@@ -106,17 +125,12 @@ class MainActivity : GymFitActivity() {
         if (uri != null) try {
             val parsed = contentResolver.openInputStream(uri)?.use { XlsxRoutineParser.parse(it) }
                 ?: error("No se pudo abrir el archivo")
-            pauseMorning()
-            pauseSessionRest()
-            plan = parsed
-            resetMorning()
-            getPreferences(MODE_PRIVATE).edit().remove(MORNING_DONE).apply()
-            exerciseRuns.clear()
-            RoutineStore.saveRoutine(this, parsed)
-            selectedWeek = parsed.weeks().firstOrNull() ?: 1
-            RoutineStore.saveActiveWeek(this, selectedWeek)
-            Toast.makeText(this, "Rutina importada: ${parsed.exercises.size} ejercicios de tarde y ${parsed.morningSteps.size} de mañana", Toast.LENGTH_LONG).show()
-            showPage(Page.TODAY)
+            chooseMonth("Mes de la nueva rutina", parsed.month ?: YearMonth.now()) { period ->
+                saveSessionFields()
+                monthly.create(parsed.copy(month = period), period)
+                RoutineStore.setImported(this, true)
+                activateImportedPlan()
+            }
         } catch (e: Exception) {
             Toast.makeText(this, "No se pudo importar: ${e.message}", Toast.LENGTH_LONG).show()
         }
@@ -128,8 +142,8 @@ class MainActivity : GymFitActivity() {
     ) { uri ->
         if (uri != null) try {
             val output = contentResolver.openOutputStream(uri) ?: error("No se pudo guardar el archivo")
-            output.use { target -> assets.open(TEMPLATE).use { it.copyTo(target) } }
-            Toast.makeText(this, "Plantilla Excel guardada", Toast.LENGTH_LONG).show()
+            output.use { target -> pendingWorkbook.inputStream().use { it.copyTo(target) } }
+            Toast.makeText(this, "Excel guardado", Toast.LENGTH_LONG).show()
         } catch (e: Exception) {
             Toast.makeText(this, "No se pudo guardar: ${e.message}", Toast.LENGTH_LONG).show()
         }
@@ -138,10 +152,10 @@ class MainActivity : GymFitActivity() {
     /** Inicializa la interfaz, migra preferencias antiguas y restaura el estado visible. */
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.statusBarColor = Color.rgb(248, 251, 254)
-        window.navigationBarColor = Color.WHITE
-        @Suppress("DEPRECATION")
-        window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+        WindowInsetsControllerCompat(window, window.decorView).apply {
+            isAppearanceLightStatusBars = !isDarkTheme()
+            isAppearanceLightNavigationBars = !isDarkTheme()
+        }
         setContentView(R.layout.activity_main)
         content = findViewById(R.id.screenContent)
         navigation = findViewById(R.id.bottomNavigation)
@@ -159,6 +173,7 @@ class MainActivity : GymFitActivity() {
         selectedWeek = RoutineStore.activeWeek(this).takeIf { it in plan.weeks() }
             ?: plan.weeks().firstOrNull() ?: 1
         if (savedInstanceState != null) {
+            templateExport = savedInstanceState.getBoolean("templateExport")
             if (plan.morningSteps.isNotEmpty()) {
                 morningIndex = savedInstanceState.getInt("morningIndex", 0)
                     .coerceIn(plan.morningSteps.indices)
@@ -169,13 +184,14 @@ class MainActivity : GymFitActivity() {
             sessionWeek = savedInstanceState.getInt("sessionWeek", selectedWeek)
             sessionDay = savedInstanceState.getString("sessionDay").orEmpty()
             sessionIndex = savedInstanceState.getInt("sessionIndex", 0)
-            if (sessionDay.isNotBlank()) {
-                plan.forDay(sessionWeek, sessionDay).getOrNull(sessionIndex)?.let { item ->
-                    exerciseRuns[item.key()] = ExerciseRun(
-                        phase = runCatching { ExercisePhase.valueOf(savedInstanceState.getString("sessionPhase", "READY")!!) }
+            savedInstanceState.getBundle("exerciseRuns")?.let { runs ->
+                for (key in runs.keySet()) {
+                    val state = runs.getBundle(key) ?: continue
+                    exerciseRuns[key] = ExerciseRun(
+                        phase = runCatching { ExercisePhase.valueOf(state.getString("phase").orEmpty()) }
                             .getOrDefault(ExercisePhase.READY),
-                        round = savedInstanceState.getInt("sessionRound", 1),
-                        remainingSeconds = savedInstanceState.getInt("sessionRemaining", 0)
+                        round = state.getInt("round", 1),
+                        remainingSeconds = state.getInt("remaining", 0)
                     )
                 }
             }
@@ -184,7 +200,16 @@ class MainActivity : GymFitActivity() {
             Page.MORNING.name -> showPage(if (plan.morningSteps.isEmpty()) Page.TODAY else Page.MORNING)
             Page.SESSION.name -> if (sessionDay.isNotBlank() && plan.forDay(sessionWeek, sessionDay).isNotEmpty())
                 session(sessionWeek, sessionDay) else showPage(Page.TODAY)
+            Page.ROUTINE.name -> showPage(Page.ROUTINE)
+            Page.PROGRESS.name -> showPage(Page.PROGRESS)
+            Page.TEMPLATE.name -> showPage(Page.TEMPLATE)
             else -> showPage(Page.TODAY)
+        }
+        if (monthly.active() == null && imported && stored != null) {
+            chooseMonth("Asigna mes y año a tu rutina anterior", YearMonth.now(), migration = true) { period ->
+                monthly.create(stored.copy(month = period), period, progress)
+                activateImportedPlan()
+            }
         }
     }
 
@@ -192,19 +217,22 @@ class MainActivity : GymFitActivity() {
     override fun onSaveInstanceState(outState: Bundle) {
         saveSessionFields()
         outState.putString("page", page.name)
+        outState.putBoolean("templateExport", templateExport)
         outState.putInt("morningIndex", morningIndex)
         outState.putInt("morningRemaining", morningRemaining)
         outState.putBoolean("morningStarted", morningStarted)
         outState.putInt("sessionWeek", sessionWeek)
         outState.putString("sessionDay", sessionDay)
         outState.putInt("sessionIndex", sessionIndex)
-        plan.forDay(sessionWeek, sessionDay).getOrNull(sessionIndex)?.let { item ->
-            exerciseRuns[item.key()]?.let { run ->
-                outState.putString("sessionPhase", run.phase.name)
-                outState.putInt("sessionRound", run.round)
-                outState.putInt("sessionRemaining", run.remainingSeconds)
+        outState.putBundle("exerciseRuns", Bundle().apply {
+            exerciseRuns.forEach { (key, run) ->
+                putBundle(key, Bundle().apply {
+                    putString("phase", run.phase.name)
+                    putInt("round", run.round)
+                    putInt("remaining", run.remainingSeconds)
+                })
             }
-        }
+        })
         super.onSaveInstanceState(outState)
     }
 
@@ -230,11 +258,31 @@ class MainActivity : GymFitActivity() {
         add(titles, text(title, 26f, bold = true))
         if (subtitle != null) add(titles, text(subtitle, 13f, muted), 4)
         line.addView(titles, LinearLayout.LayoutParams(0, -2, 1f))
+        line.addView(AppCompatImageButton(this).apply {
+            val dark = isDarkTheme()
+            setImageResource(if (dark) R.drawable.ic_theme_sun else R.drawable.ic_theme_moon)
+            imageTintList = ColorStateList.valueOf(muted)
+            contentDescription = getString(if (dark) R.string.activate_light_theme else R.string.activate_dark_theme)
+            val background = android.util.TypedValue()
+            theme.resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, background, true)
+            setBackgroundResource(background.resourceId)
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            setOnClickListener {
+                saveSessionFields()
+                pauseMorning()
+                pauseSessionRest()
+                ThemePreferences.setDark(this@MainActivity, !dark)
+            }
+        }, LinearLayout.LayoutParams(dp(48), dp(48)))
         line.addView(text("⚙", 25f, muted).apply {
             gravity = Gravity.CENTER; contentDescription = "Ajustes"; setOnClickListener { settings() }
         }, LinearLayout.LayoutParams(dp(42), dp(42)))
         add(body, line, bottom = 19)
     }
+
+    /** Consulta el tema efectivo, incluyendo la preferencia inicial del dispositivo. */
+    private fun isDarkTheme(): Boolean =
+        resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
 
     /** Cambia de página, conserva datos editados y pausa temporizadores que dejan de ser visibles. */
     private fun showPage(next: Page) {
@@ -319,7 +367,7 @@ class MainActivity : GymFitActivity() {
                 }
             }, 16)
         }
-        add(body, card(morning, Color.WHITE, line), bottom = 18)
+        add(body, card(morning), bottom = 18)
         add(body, text("TARDE", 13f, red, true), bottom = 8)
         if (plan.exercises.isEmpty()) {
             val empty = col(18)
@@ -330,7 +378,7 @@ class MainActivity : GymFitActivity() {
                 setOnClickListener { openRoutinePicker() }
             }, 17)
             add(empty, button("Descargar plantilla", false).apply {
-                setOnClickListener { saveTemplate.launch("GymFit_plantilla.xlsx") }
+                setOnClickListener { downloadWorkbook() }
             }, 8)
             add(body, card(empty))
             return
@@ -338,7 +386,7 @@ class MainActivity : GymFitActivity() {
         val day = todayName()
         val info = plan.session(day)
         val items = plan.forDay(selectedWeek, day)
-        val hero = FrameLayout(this).apply { background = box(ink, 18); clipToOutline = true }
+        val hero = FrameLayout(this).apply { background = box(getColor(R.color.navy), 18); clipToOutline = true }
         hero.addView(ImageView(this).apply {
             setImageResource(R.drawable.boxing_hero); scaleType = ImageView.ScaleType.CENTER_CROP
         }, FrameLayout.LayoutParams(-1, -1))
@@ -366,7 +414,9 @@ class MainActivity : GymFitActivity() {
     }
 
     /** Indica si la rutina matinal ya se completó en la fecha local actual. */
-    private fun morningDoneToday(): Boolean = getPreferences(MODE_PRIVATE).getString(MORNING_DONE, null) == todayKey()
+    private fun morningDoneToday(): Boolean = monthly.active()?.let { document ->
+        document.workouts.any { it.kind == "mañana" && it.finishedAt.take(10) == LocalDate.now().toString() }
+    } ?: (getPreferences(MODE_PRIVATE).getString(MORNING_DONE, null) == todayKey())
 
     /** Reinicia por completo el estado y el contador de la rutina matinal. */
     private fun resetMorning() {
@@ -426,7 +476,7 @@ class MainActivity : GymFitActivity() {
             entry.addView(text(item.title, 14f, ink, index == morningIndex),
                 LinearLayout.LayoutParams(0, -2, 1f))
             entry.addView(text(formatTime(item.seconds), 13f, muted))
-            add(body, card(entry, if (index == morningIndex) Color.rgb(255, 249, 249) else Color.WHITE,
+            add(body, card(entry, if (index == morningIndex) getColor(R.color.selected_surface) else cardSurface,
                 if (index == morningIndex) red else line), bottom = 7)
         }
         add(body, text("Muévete sin dolor y a tu propio ritmo. Si notas mareo o malestar, detén la rutina.",
@@ -451,6 +501,7 @@ class MainActivity : GymFitActivity() {
     /** Inicia o reanuda el contador del paso matinal actual. */
     private fun startMorning() {
         if (morningRunning) return
+        monthly.beginMorning()
         morningStarted = true
         morningRunning = true
         updateMorningClock()
@@ -482,6 +533,7 @@ class MainActivity : GymFitActivity() {
     private fun advanceMorning() {
         pauseMorning()
         if (morningIndex == plan.morningSteps.lastIndex) {
+            monthly.finishMorning()
             getPreferences(MODE_PRIVATE).edit().putString(MORNING_DONE, todayKey()).apply()
             resetMorning()
             Toast.makeText(this, "¡Rutina de mañana completada!", Toast.LENGTH_LONG).show()
@@ -497,6 +549,8 @@ class MainActivity : GymFitActivity() {
     private fun routine() {
         val body = scrollPage()
         header(body, "Rutina", "Selecciona una semana y un día")
+        monthly.active()?.let { add(body, text(it.label(), 14f, muted), bottom = 12) }
+        add(body, button("Mis rutinas", false).apply { setOnClickListener { showMonthlyRoutines() } }, bottom = 14)
         if (plan.exercises.isEmpty()) {
             showRoutineEmpty(body)
             return
@@ -517,7 +571,7 @@ class MainActivity : GymFitActivity() {
             val done = items.count { progress[it.key()]?.done == true }
             val panel = row().apply { setPadding(dp(13), dp(13), dp(13), dp(13)) }
             panel.addView(text(if (day == "Domingo") "◷" else "✦", 20f, red, true).apply {
-                gravity = Gravity.CENTER; background = box(Color.rgb(250, 239, 241), 25)
+                gravity = Gravity.CENTER; background = box(getColor(R.color.badge_surface), 25)
             }, LinearLayout.LayoutParams(dp(43), dp(43)))
             val details = col().apply { setPadding(dp(11), 0, 0, 0) }
             add(details, text(day, 16f, bold = true))
@@ -526,7 +580,7 @@ class MainActivity : GymFitActivity() {
             panel.addView(details, LinearLayout.LayoutParams(0, -2, 1f))
             val complete = items.isNotEmpty() && done == items.size
             panel.addView(text(if (complete) "✓" else "›", 22f, if (complete) green else red, true))
-            add(body, card(panel, if (day == todayName()) Color.rgb(255, 249, 249) else Color.WHITE,
+            add(body, card(panel, if (day == todayName()) getColor(R.color.selected_surface) else cardSurface,
                 if (day == todayName()) red else line).apply {
                 setOnClickListener { session(selectedWeek, day) }
             }, bottom = 9)
@@ -552,6 +606,10 @@ class MainActivity : GymFitActivity() {
 
     /** Abre una sesión y selecciona el primer ejercicio pendiente. */
     private fun session(week: Int, day: String) {
+        saveSessionFields()
+        val previous = monthly.active()?.workouts?.lastOrNull { it.week == week && it.day == day && it.kind == "tarde" }
+        sessionReadOnly = previous != null && previous.finishedAt.isNotBlank()
+        if (!sessionReadOnly) monthly.begin(week, day)
         if (sessionWeek != week || sessionDay != day) {
             saveSessionFields()
             pauseSessionRest()
@@ -588,6 +646,19 @@ class MainActivity : GymFitActivity() {
         val focus = plan.session(day).focus
         if (focus.isNotBlank()) add(summary, text(focus, 13f, muted), 5)
         add(body, card(summary, pale, pale), bottom = 13)
+        if (sessionReadOnly) {
+            add(body, text("Entrenamiento finalizado. Sus resultados se conservan en el historial.", 14f, green), bottom = 10)
+            add(body, button("Repetir entrenamiento").apply { setOnClickListener {
+                sessionFields = emptyList()
+                sessionFieldKey = null
+                monthly.begin(week, day, repeat = true)
+                progress.clear()
+                progress.putAll(RoutineStore.loadProgress(this@MainActivity))
+                exerciseRuns.clear()
+                sessionReadOnly = false
+                renderSession()
+            } }, bottom = 14)
+        }
 
         val panel = col(18)
         add(panel, text("EJERCICIO ${sessionIndex + 1} DE ${items.size} · ${item.block.uppercase()}", 13f, red, true))
@@ -620,6 +691,7 @@ class MainActivity : GymFitActivity() {
         add(panel, sessionAction!!, 19)
         add(body, card(panel, pale, pale), bottom = 12)
         updateSessionControls(item)
+        if (sessionReadOnly) sessionAction?.isEnabled = false
 
         val controls = row()
         controls.addView(button("‹  Anterior", false).apply {
@@ -658,6 +730,15 @@ class MainActivity : GymFitActivity() {
         add(fields, editors.last())
         sessionFieldKey = item.key()
         sessionFields = editors
+        editors.forEach { editor ->
+            editor.isEnabled = !sessionReadOnly
+            editor.doAfterTextChanged {
+                if (!sessionReadOnly) {
+                    autosaveHandler.removeCallbacks(autosave)
+                    autosaveHandler.postDelayed(autosave, 400L)
+                }
+            }
+        }
         add(body, card(fields), bottom = 17)
 
         add(body, text("Todos los ejercicios", 18f, bold = true), bottom = 10)
@@ -678,6 +759,7 @@ class MainActivity : GymFitActivity() {
                 setTextColor(if (done) green else muted)
                 buttonTintList = ColorStateList.valueOf(green)
                 isChecked = done
+                isEnabled = !sessionReadOnly
                 setOnCheckedChangeListener { _, checked ->
                     pauseSessionRest()
                     progress.getOrPut(listed.key()) { ExerciseProgress() }.done = checked
@@ -686,8 +768,8 @@ class MainActivity : GymFitActivity() {
                     renderSession()
                 }
             })
-            add(body, card(entry, if (done) Color.rgb(238, 249, 244) else if (index == sessionIndex)
-                Color.rgb(255, 249, 249) else Color.WHITE,
+            add(body, card(entry, if (done) getColor(R.color.completed_surface) else if (index == sessionIndex)
+                getColor(R.color.selected_surface) else cardSurface,
                 if (done) green else if (index == sessionIndex) red else line).apply {
                 setOnClickListener { selectSessionExercise(index) }
             }, bottom = 7)
@@ -703,11 +785,15 @@ class MainActivity : GymFitActivity() {
         setSingleLine(true)
         setText(value)
         setPadding(dp(10), 0, dp(10), 0)
-        background = box(Color.WHITE, 9, line)
+        background = box(cardSurface, 9, line)
+        setTextColor(ink)
+        setHintTextColor(muted)
     }
 
     /** Copia los campos visibles al progreso y los persiste antes de abandonar el ejercicio. */
     private fun saveSessionFields() {
+        autosaveHandler.removeCallbacks(autosave)
+        if (sessionReadOnly) return
         val key = sessionFieldKey ?: return
         val current = progress.getOrPut(key) { ExerciseProgress() }
         if (sessionFields.size == 4) {
@@ -750,7 +836,7 @@ class MainActivity : GymFitActivity() {
             "${formatTime(rest)} de descanso tras cada serie, incluida la última"
         else "Sin descanso programado"
         sessionAction?.apply {
-            isEnabled = !done
+            isEnabled = !done && !sessionReadOnly
             text = when {
                 done -> "✓  Hecho"
                 run.phase == ExercisePhase.REST && sessionRunning -> "Ⅱ  Pausar descanso"
@@ -765,6 +851,7 @@ class MainActivity : GymFitActivity() {
 
     /** Ejecuta la transición solicitada por el botón principal de la sesión. */
     private fun handleSessionAction(item: RoutineExercise) {
+        if (sessionReadOnly) return
         if (progress[item.key()]?.done == true) return
         val run = exerciseRuns.getOrPut(item.key()) { ExerciseRun() }
         when (run.phase) {
@@ -836,13 +923,23 @@ class MainActivity : GymFitActivity() {
         saveSessionFields()
         pauseSessionRest()
         val pending = items.count { progress[it.key()]?.done != true }
-        if (pending == 0 || items.isEmpty()) { showPage(Page.PROGRESS); return }
+        if (pending == 0 || items.isEmpty()) {
+            monthly.finish(sessionWeek, sessionDay)
+            showPage(Page.PROGRESS)
+            return
+        }
         AlertDialog.Builder(this).setTitle("Finalizar entrenamiento")
             .setMessage("Quedan $pending ejercicios sin marcar. ¿Quieres marcarlos como completados?")
             .setNegativeButton("Seguir entrenando", null)
+            .setNeutralButton("Finalizar sin marcarlos") { _, _ ->
+                monthly.finish(sessionWeek, sessionDay)
+                showPage(Page.PROGRESS)
+            }
             .setPositiveButton("Marcar y finalizar") { _, _ ->
                 items.forEach { progress.getOrPut(it.key()) { ExerciseProgress() }.done = true }
-                RoutineStore.saveProgress(this, progress); showPage(Page.PROGRESS)
+                RoutineStore.saveProgress(this, progress)
+                monthly.finish(sessionWeek, sessionDay)
+                showPage(Page.PROGRESS)
             }.show()
     }
 
@@ -909,6 +1006,9 @@ class MainActivity : GymFitActivity() {
     private fun templatePage() {
         val body = scrollPage()
         header(body, "Plantilla", "Importa o guarda tu rutina de Excel")
+        add(body, button("Mis rutinas · consultar o exportar", false).apply {
+            setOnClickListener { showMonthlyRoutines() }
+        }, bottom = 12)
         val tabs = row()
         tabs.addView(button("Importar", !templateExport).apply {
             setOnClickListener { templateExport = false; templatePage() }
@@ -930,7 +1030,7 @@ class MainActivity : GymFitActivity() {
         add(panel, button("Seleccionar archivo").apply {
             setOnClickListener { openRoutinePicker() }
         }, top = 22, bottom = 10)
-        add(body, card(panel, Color.WHITE, Color.rgb(173, 191, 207)), bottom = 14)
+        add(body, card(panel, cardSurface, getColor(R.color.strong_border)), bottom = 14)
         val format = col(15)
         add(format, text("Formato esperado", 17f, bold = true), bottom = 10)
         listOf("✓  Archivo .xlsx", "✓  Hojas Mañana, Inicio y Semana 1–4",
@@ -952,12 +1052,15 @@ class MainActivity : GymFitActivity() {
             gravity = Gravity.CENTER
         }, top = 8)
         add(panel, button("↓  Descargar plantilla").apply {
-            setOnClickListener { saveTemplate.launch("GymFit_plantilla.xlsx") }
+            setOnClickListener { downloadWorkbook() }
         }, top = 22)
         add(panel, button("♧  Compartir plantilla", false).apply {
             setOnClickListener { shareTemplate() }
         }, top = 9, bottom = 10)
         add(body, card(panel), bottom = 14)
+        add(body, button("Exportar rutina y resultados").apply {
+            setOnClickListener { showMonthlyRoutines(exportOnly = true) }
+        }, bottom = 14)
         val includes = col(15)
         add(includes, text("Incluye", 17f, bold = true), bottom = 10)
         listOf("✓  Mañana editable con duración e indicaciones", "✓  Cuatro semanas de entrenamiento",
@@ -968,8 +1071,9 @@ class MainActivity : GymFitActivity() {
     /** Copia la plantilla a caché y abre el panel nativo para compartirla. */
     private fun shareTemplate() = try {
         val folder = File(cacheDir, "shared").apply { mkdirs() }
-        val file = File(folder, "GymFit_plantilla.xlsx")
-        assets.open(TEMPLATE).use { source -> file.outputStream().use { source.copyTo(it) } }
+        val period = YearMonth.now()
+        val file = File(folder, "%02d_%04d.xlsx".format(Locale.ROOT, period.monthValue, period.year))
+        file.outputStream().use { RoutineWorkbook.write(it, embeddedPlan(), period) }
         val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
         startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
             type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -979,6 +1083,111 @@ class MainActivity : GymFitActivity() {
     } catch (e: Exception) {
         Toast.makeText(this, "No se pudo compartir: ${e.message}", Toast.LENGTH_LONG).show()
     }
+    /** Solicita el período del documento sin deducir fechas de entrenamientos antiguos. */
+    private fun chooseMonth(title: String, initial: YearMonth, migration: Boolean = false, action: (YearMonth) -> Unit) {
+        val panel = col(16)
+        add(panel, text(if (migration) "Conservaremos tus resultados; las fechas antiguas seguirán como desconocidas."
+            else "La rutina actual pasará al histórico. La nueva empezará con progreso a cero.", 14f), bottom = 12)
+        val selectors = row()
+        val month = NumberPicker(this).apply { minValue = 1; maxValue = 12; value = initial.monthValue }
+        val year = NumberPicker(this).apply { minValue = 1900; maxValue = 9999; value = initial.year }
+        selectors.addView(month, LinearLayout.LayoutParams(0, -2, 1f))
+        selectors.addView(year, LinearLayout.LayoutParams(0, -2, 1f))
+        add(panel, text("Mes                         Año", 14f))
+        add(panel, selectors)
+        val dialog = AlertDialog.Builder(this).setTitle(title).setView(panel)
+            .setCancelable(!migration).setPositiveButton("Guardar rutina", null)
+        if (!migration) dialog.setNegativeButton("Cancelar", null)
+        val shown = dialog.create()
+        shown.setOnShowListener { shown.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            try {
+                month.clearFocus()
+                year.clearFocus()
+                action(YearMonth.of(year.value, month.value))
+                shown.dismiss()
+            } catch (error: Exception) { Toast.makeText(this, "No se pudo guardar: ${error.message}", Toast.LENGTH_LONG).show() }
+        } }
+        shown.show()
+    }
+
+    /** Sustituye el estado visible tras importar o migrar sin escribir el progreso anterior en el nuevo mes. */
+    private fun activateImportedPlan() {
+        morningTimer?.cancel()
+        sessionTimer?.cancel()
+        sessionTimer = null
+        sessionRunning = false
+        sessionFields = emptyList()
+        sessionFieldKey = null
+        sessionReadOnly = false
+        exerciseRuns.clear()
+        sessionDay = ""
+        sessionIndex = 0
+        plan = monthly.active()?.plan ?: RoutinePlan(emptyList())
+        progress.clear()
+        progress.putAll(monthly.active()?.progress.orEmpty())
+        resetMorning()
+        selectedWeek = plan.weeks().firstOrNull() ?: 1
+        RoutineStore.saveActiveWeek(this, selectedWeek)
+        page = Page.TODAY
+        showPage(Page.TODAY)
+    }
+
+    /** Genera una instantánea de un único documento o la plantilla del mes actual. */
+    private fun downloadWorkbook(document: MonthlyRoutine? = null) {
+        try {
+            saveSessionFields()
+            val selected = document?.let { monthly.read(it.id) }
+            val period = selected?.month ?: YearMonth.now()
+            pendingWorkbook.outputStream().use { RoutineWorkbook.write(it, selected?.plan ?: embeddedPlan(), period, selected) }
+            val filename = selected?.id ?: "%02d_%04d".format(Locale.ROOT, period.monthValue, period.year)
+            saveTemplate.launch("$filename.xlsx")
+        } catch (error: Exception) { Toast.makeText(this, "No se pudo preparar el Excel: ${error.message}", Toast.LENGTH_LONG).show() }
+    }
+
+    /** Ofrece el documento activo y los históricos sin combinar resultados de distintas importaciones. */
+    private fun showMonthlyRoutines(exportOnly: Boolean = false) {
+        saveSessionFields()
+        pauseMorning()
+        pauseSessionRest()
+        try {
+            val documents = monthly.list()
+            if (documents.isEmpty()) {
+                Toast.makeText(this, "Todavía no hay rutinas mensuales", Toast.LENGTH_LONG).show()
+                return
+            }
+            val activeId = monthly.active()?.id
+            val labels = documents.map { "${it.label()} · ${if (it.id == activeId) "Activa" else "Histórica"}" }.toTypedArray()
+            AlertDialog.Builder(this).setTitle(if (exportOnly) "Elige una rutina para exportar" else "Mis rutinas")
+                .setItems(labels) { _, index ->
+                    if (exportOnly) downloadWorkbook(documents[index]) else showMonthlyDetail(documents[index])
+                }.setNegativeButton("Cerrar", null).show()
+        } catch (error: Exception) { Toast.makeText(this, "No se pudo leer el histórico: ${error.message}", Toast.LENGTH_LONG).show() }
+    }
+
+    /** Muestra planificación y realizaciones de un mes en modo consulta y permite exportarlo. */
+    private fun showMonthlyDetail(document: MonthlyRoutine) {
+        val body = col(16)
+        add(body, text("Importada: ${document.importedAt}\n${document.workouts.size} registros de entrenamiento", 14f), bottom = 12)
+        add(body, text("Planificación", 19f, bold = true), bottom = 10)
+        document.plan.morningSteps.forEach { step -> add(body, text("Mañana · ${step.title} · ${formatTime(step.seconds)}\n${step.instruction}", 14f), bottom = 8) }
+        document.plan.exercises.forEach { item ->
+            add(body, text("Semana ${item.week} · ${item.day}\n${item.exercise}: ${item.series} series · ${item.reps} · descanso ${item.rest}\n${item.instruction}", 14f), bottom = 10)
+        }
+        add(body, text("Entrenamientos realizados", 19f, bold = true), top = 12, bottom = 10)
+        if (document.workouts.isEmpty()) add(body, text("Sin entrenamientos registrados.", 14f))
+        document.workouts.forEach { record ->
+            add(body, text("${record.day} · Semana ${record.week}\n${record.startedAt.ifBlank { "Fecha desconocida" }} · ${if (record.finishedAt.isBlank() && record.kind != "anterior") "En curso" else "Guardado"}", 15f, bold = true), top = 12)
+            record.results.forEach { (key, value) ->
+                val name = document.plan.exercises.firstOrNull { it.key() == key }?.exercise ?: key
+                add(body, text("$name · ${if (value.done) "Hecho" else "Pendiente"}\nPeso: ${value.weight} · Reps: ${value.actualReps} · RIR: ${value.rir}\n${value.userNote}", 14f), top = 6)
+            }
+        }
+        val scroll = ScrollView(this).apply { addView(body) }
+        AlertDialog.Builder(this).setTitle(document.label()).setView(scroll)
+            .setPositiveButton("Exportar este mes") { _, _ -> downloadWorkbook(document) }
+            .setNegativeButton("Cerrar", null).show()
+    }
+
     /** Muestra información de la aplicación y el acceso al borrado de progreso. */
     private fun settings() {
         AlertDialog.Builder(this).setTitle("GymFit")
@@ -1011,6 +1220,7 @@ class MainActivity : GymFitActivity() {
     }
     /** Libera ambos temporizadores antes de destruir la actividad. */
     override fun onDestroy() {
+        autosaveHandler.removeCallbacks(autosave)
         morningTimer?.cancel()
         sessionTimer?.cancel()
         super.onDestroy()

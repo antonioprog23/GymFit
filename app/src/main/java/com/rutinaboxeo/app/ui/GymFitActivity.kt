@@ -1,7 +1,6 @@
 package com.rutinaboxeo.app.ui
 
 import android.content.res.ColorStateList
-import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
@@ -15,6 +14,8 @@ import com.google.android.material.card.MaterialCardView
 
 /** Base visual que concentra la paleta y los componentes programáticos de GymFit. */
 abstract class GymFitActivity : AppCompatActivity() {
+    /** Fondo de tarjetas adaptado al tema activo. */
+    protected val cardSurface by lazy(LazyThreadSafetyMode.NONE) { getColor(R.color.card_surface) }
     /** Color principal de texto y fondos oscuros. */
     protected val ink by lazy(LazyThreadSafetyMode.NONE) { getColor(R.color.text_primary) }
 
@@ -75,7 +76,7 @@ abstract class GymFitActivity : AppCompatActivity() {
     }
 
     /** Envuelve una vista en una tarjeta con fondo, borde y elevación coherentes. */
-    protected fun card(child: View, fill: Int = Color.WHITE, border: Int = line): MaterialCardView =
+    protected fun card(child: View, fill: Int = cardSurface, border: Int = line): MaterialCardView =
         MaterialCardView(this).apply {
             setCardBackgroundColor(fill)
             radius = dp(16).toFloat()
@@ -95,8 +96,8 @@ abstract class GymFitActivity : AppCompatActivity() {
         minHeight = dp(48)
         insetTop = 0
         insetBottom = 0
-        backgroundTintList = ColorStateList.valueOf(if (filled) red else Color.WHITE)
-        setTextColor(if (filled) Color.WHITE else red)
+        backgroundTintList = ColorStateList.valueOf(if (filled) red else cardSurface)
+        setTextColor(if (filled) getColor(R.color.on_accent) else red)
         if (!filled) {
             strokeColor = ColorStateList.valueOf(red)
             strokeWidth = dp(1)

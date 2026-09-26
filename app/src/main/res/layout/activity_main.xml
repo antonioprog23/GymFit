@@ -15,7 +15,7 @@
         android:layout_width="match_parent"
         android:layout_height="64dp"
         android:orientation="horizontal"
-        android:background="@color/white"
+        android:background="@color/card_surface"
         android:elevation="8dp"
         android:gravity="center_vertical" />
 </LinearLayout>

@@ -2,9 +2,13 @@ package com.rutinaboxeo.app
 
 import android.content.Context
 import android.content.SharedPreferences
+import java.io.File
 
 /** Gestiona la persistencia local de rutina, progreso y preferencias de navegación. */
 object RoutineStore {
+    /** Accede a los documentos mensuales privados sin mezclar sus progresos. */
+    fun monthly(context: Context): MonthlyRepository = MonthlyRepository(File(context.filesDir, "routines"))
+
     /** Guarda el plan completo y lo marca como una importación explícita. */
     fun saveRoutine(context: Context, plan: RoutinePlan) {
         preferences(context).edit()
@@ -14,8 +18,11 @@ object RoutineStore {
     }
 
     /** Devuelve el estado de importación o `null` para instalaciones de versiones antiguas. */
-    fun importedStatus(context: Context): Boolean? = preferences(context).let { prefs ->
-        if (prefs.contains(IMPORTED)) prefs.getBoolean(IMPORTED, false) else null
+    fun importedStatus(context: Context): Boolean? {
+        if (monthly(context).active() != null) return true
+        return preferences(context).let { prefs ->
+            if (prefs.contains(IMPORTED)) prefs.getBoolean(IMPORTED, false) else null
+        }
     }
 
     /** Registra si existe una rutina importada que deba mostrarse. */
@@ -24,18 +31,22 @@ object RoutineStore {
     }
 
     /** Recupera el plan guardado o `null` cuando falta o está dañado. */
-    fun loadRoutine(context: Context): RoutinePlan? = preferences(context)
+    fun loadRoutine(context: Context): RoutinePlan? = monthly(context).active()?.plan ?: preferences(context)
         .getString(ROUTINE, null)
         ?.let(RoutineJson::decodePlan)
 
     /** Recupera todo el progreso; devuelve un mapa vacío si los datos no son válidos. */
-    fun loadProgress(context: Context): MutableMap<String, ExerciseProgress> = preferences(context)
+    fun loadProgress(context: Context): MutableMap<String, ExerciseProgress> = monthly(context).active()?.progress ?: preferences(context)
         .getString(PROGRESS, EMPTY_JSON)
         .orEmpty()
         .let(RoutineJson::decodeProgress)
 
-    /** Guarda de forma asíncrona el estado completo del progreso. */
+    /** Guarda el progreso en el JSON activo o en preferencias si aún falta migrar. */
     fun saveProgress(context: Context, map: Map<String, ExerciseProgress>) {
+        if (monthly(context).active() != null) {
+            monthly(context).updateProgress(map)
+            return
+        }
         preferences(context).edit().putString(PROGRESS, RoutineJson.encodeProgress(map)).apply()
     }
 
@@ -49,6 +60,10 @@ object RoutineStore {
 
     /** Elimina únicamente registros del usuario y conserva la rutina importada. */
     fun clearProgress(context: Context) {
+        if (monthly(context).active() != null) {
+            monthly(context).clearProgress()
+            return
+        }
         preferences(context).edit().remove(PROGRESS).apply()
     }
 
