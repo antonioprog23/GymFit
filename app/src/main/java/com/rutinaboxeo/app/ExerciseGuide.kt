@@ -3,10 +3,13 @@ package com.rutinaboxeo.app
 import java.text.Normalizer
 import java.util.Locale
 
+/** Proporciona instrucciones de apoyo cuando la plantilla no incluye una específica. */
 object ExerciseGuide {
+    /** Obtiene una indicación segura y adaptada al nombre o bloque del ejercicio. */
     fun forExercise(item: RoutineExercise): String {
+        if (item.instruction.isNotBlank()) return item.instruction.trim()
         val name = Normalizer.normalize(item.exercise.lowercase(Locale.ROOT), Normalizer.Form.NFD)
-            .replace(Regex("\\p{M}+"), "")
+            .replace(DIACRITICS, "")
         return when {
             name.contains("descanso completo") -> "Día de descanso. Deja que el cuerpo se recupere antes de la siguiente sesión."
             name.contains("rutina completa") -> "Sigue la secuencia de la hoja Recuperación de la plantilla, a un ritmo cómodo."
@@ -50,4 +53,7 @@ object ExerciseGuide {
             else -> "Realiza ${item.reps.takeUnless { it.isBlank() || it == "-" } ?: "las repeticiones indicadas"} con control y sin dolor. Descansa entre series según la plantilla."
         }
     }
+
+    /** Expresión reutilizada para normalizar búsquedas con o sin tildes. */
+    private val DIACRITICS = Regex("\\p{M}+")
 }

@@ -11,7 +11,6 @@ import android.os.CountDownTimer
 import android.text.InputType
 import android.view.Gravity
 import android.view.View
-import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.EditText
 import android.widget.CheckBox
@@ -21,53 +20,88 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
-import androidx.recyclerview.widget.LinearLayoutManager
+import com.rutinaboxeo.app.ui.GymFitActivity
 import com.google.android.material.button.MaterialButton
-import com.google.android.material.card.MaterialCardView
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
 
-class MainActivity : AppCompatActivity() {
-    private val ink = Color.rgb(27, 41, 55)
-    private val muted = Color.rgb(89, 106, 124)
-    private val red = Color.rgb(190, 58, 65)
-    private val pale = Color.rgb(235, 243, 249)
-    private val line = Color.rgb(226, 235, 242)
-    private val green = Color.rgb(24, 132, 92)
+/** Pantalla única de GymFit; coordina navegación, temporizadores y renderizado de sesiones. */
+class MainActivity : GymFitActivity() {
+    /** Contenedor donde se dibuja la página activa. */
     private lateinit var content: FrameLayout
+    /** Barra inferior que permite cambiar de sección. */
     private lateinit var navigation: LinearLayout
+    /** Plan importado actualmente visible. */
     private var plan = RoutinePlan(emptyList())
+    /** Progreso local cargado bajo demanda. */
     private val progress by lazy { RoutineStore.loadProgress(this) }
+    /** Semana elegida en las vistas de rutina y hoy. */
     private var selectedWeek = 1
+    /** Página que controla el contenido y el estado de la navegación. */
     private var page = Page.TODAY
+    /** Indica si la pestaña Plantilla muestra exportación. */
     private var templateExport = false
+    /** Posición actual dentro de la rutina matinal. */
     private var morningIndex = 0
+    /** Segundos pendientes del paso matinal activo. */
     private var morningRemaining = 0
+    /** Indica si la rutina matinal ya se inició. */
     private var morningStarted = false
+    /** Indica si el contador matinal está avanzando. */
     private var morningRunning = false
+    /** Temporizador activo de la rutina matinal. */
     private var morningTimer: CountDownTimer? = null
+    /** Referencia al reloj matinal visible. */
     private var morningClock: TextView? = null
+    /** Referencia al tiempo total pendiente de la rutina matinal. */
     private var morningTotal: TextView? = null
+    /** Botón que inicia o pausa el contador matinal. */
     private var morningPlay: MaterialButton? = null
+    /** Semana de la sesión de tarde abierta. */
     private var sessionWeek = 1
+    /** Día de la sesión de tarde abierta. */
     private var sessionDay = ""
+    /** Índice del ejercicio visible en la sesión. */
     private var sessionIndex = 0
+    /** Estados de ejecución conservados para cada ejercicio. */
     private val exerciseRuns = mutableMapOf<String, ExerciseRun>()
+    /** Temporizador activo de trabajo o descanso. */
     private var sessionTimer: CountDownTimer? = null
+    /** Indica si el temporizador de sesión está avanzando. */
     private var sessionRunning = false
+    /** Referencia al reloj visible del ejercicio. */
     private var sessionClock: TextView? = null
+    /** Referencia a la descripción de fase del ejercicio. */
     private var sessionStatus: TextView? = null
+    /** Referencia al resumen de descanso entre series. */
     private var sessionRestOverview: TextView? = null
+    /** Acción principal de la fase actual del ejercicio. */
     private var sessionAction: MaterialButton? = null
+    /** Clave del ejercicio cuyos campos se están editando. */
     private var sessionFieldKey: String? = null
+    /** Campos visibles que deben guardarse al cambiar de ejercicio. */
     private var sessionFields: List<EditText> = emptyList()
 
-    private enum class Page { TODAY, MORNING, ROUTINE, SESSION, PROGRESS, TEMPLATE }
+    /** Secciones navegables de la actividad. */
+    private enum class Page {
+        /** Resumen del día. */
+        TODAY,
+        /** Rutina guiada de mañana. */
+        MORNING,
+        /** Calendario completo de la rutina. */
+        ROUTINE,
+        /** Sesión guiada de tarde. */
+        SESSION,
+        /** Estadísticas y sesiones registradas. */
+        PROGRESS,
+        /** Importación y exportación de Excel. */
+        TEMPLATE
+    }
 
+    /** Selector de documentos que importa y activa una rutina XLSX válida. */
     private val importPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) try {
             val parsed = contentResolver.openInputStream(uri)?.use { XlsxRoutineParser.parse(it) }
@@ -76,7 +110,7 @@ class MainActivity : AppCompatActivity() {
             pauseSessionRest()
             plan = parsed
             resetMorning()
-            getPreferences(MODE_PRIVATE).edit().remove("morningDone").apply()
+            getPreferences(MODE_PRIVATE).edit().remove(MORNING_DONE).apply()
             exerciseRuns.clear()
             RoutineStore.saveRoutine(this, parsed)
             selectedWeek = parsed.weeks().firstOrNull() ?: 1
@@ -88,6 +122,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** Selector de destino que copia la plantilla incluida al almacenamiento elegido. */
     private val saveTemplate = registerForActivityResult(
         ActivityResultContracts.CreateDocument("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     ) { uri ->
@@ -100,6 +135,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** Inicializa la interfaz, migra preferencias antiguas y restaura el estado visible. */
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.statusBarColor = Color.rgb(248, 251, 254)
@@ -152,6 +188,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** Conserva la posición de ambas sesiones antes de recrear la actividad. */
     override fun onSaveInstanceState(outState: Bundle) {
         saveSessionFields()
         outState.putString("page", page.name)
@@ -171,37 +208,10 @@ class MainActivity : AppCompatActivity() {
         super.onSaveInstanceState(outState)
     }
 
+    /** Analiza la plantilla incluida para reconocer datos heredados de versiones anteriores. */
     private fun embeddedPlan() = assets.open(TEMPLATE).use { XlsxRoutineParser.parse(it) }
-    private fun dp(v: Int) = (v * resources.displayMetrics.density + 0.5f).toInt()
-    private fun box(fill: Int, radius: Int = 16, border: Int? = null) = GradientDrawable().apply {
-        setColor(fill); cornerRadius = dp(radius).toFloat()
-        if (border != null) setStroke(dp(1), border)
-    }
-    private fun text(value: String, size: Float = 15f, color: Int = ink, bold: Boolean = false) = TextView(this).apply {
-        this.text = value; textSize = size; setTextColor(color); includeFontPadding = false
-        if (bold) typeface = Typeface.create("sans-serif-condensed", Typeface.BOLD)
-    }
-    private fun col(pad: Int = 0) = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL; setPadding(dp(pad), dp(pad), dp(pad), dp(pad))
-    }
-    private fun row() = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-    private fun add(parent: LinearLayout, child: View, top: Int = 0, bottom: Int = 0) {
-        parent.addView(child, LinearLayout.LayoutParams(-1, -2).apply {
-            topMargin = dp(top); bottomMargin = dp(bottom)
-        })
-    }
-    private fun card(child: View, fill: Int = Color.WHITE, border: Int = line) = MaterialCardView(this).apply {
-        setCardBackgroundColor(fill); radius = dp(16).toFloat(); cardElevation = dp(1).toFloat()
-        strokeColor = border; strokeWidth = dp(1); addView(child)
-    }
-    private fun button(value: String, filled: Boolean = true) = MaterialButton(this).apply {
-        text = value; isAllCaps = false; textSize = 15f
-        typeface = Typeface.create("sans-serif-condensed", Typeface.BOLD)
-        cornerRadius = dp(10); minHeight = dp(48); insetTop = 0; insetBottom = 0
-        backgroundTintList = ColorStateList.valueOf(if (filled) red else Color.WHITE)
-        setTextColor(if (filled) Color.WHITE else red)
-        if (!filled) { strokeColor = ColorStateList.valueOf(red); strokeWidth = dp(1) }
-    }
+
+    /** Sustituye el contenido por una página desplazable y devuelve su columna raíz. */
     private fun scrollPage(): LinearLayout {
         content.removeAllViews()
         val scroll = ScrollView(this).apply { isFillViewport = true; clipToPadding = false }
@@ -209,6 +219,7 @@ class MainActivity : AppCompatActivity() {
         scroll.addView(body); content.addView(scroll, FrameLayout.LayoutParams(-1, -1))
         return body
     }
+    /** Dibuja la cabecera común con título, retorno opcional y acceso a ajustes. */
     private fun header(body: LinearLayout, title: String, subtitle: String? = null, backTo: Page? = null) {
         val line = row()
         if (backTo != null) line.addView(text("‹", 34f).apply {
@@ -225,11 +236,14 @@ class MainActivity : AppCompatActivity() {
         add(body, line, bottom = 19)
     }
 
+    /** Cambia de página, conserva datos editados y pausa temporizadores que dejan de ser visibles. */
     private fun showPage(next: Page) {
         if (page == Page.MORNING && next != Page.MORNING) pauseMorning()
         if (page == Page.SESSION && next != Page.SESSION) {
             saveSessionFields()
             pauseSessionRest()
+            sessionFields = emptyList()
+            sessionFieldKey = null
         }
         page = next
         when (next) {
@@ -242,6 +256,7 @@ class MainActivity : AppCompatActivity() {
         }
         drawNavigation()
     }
+    /** Reconstruye la barra inferior y resalta la sección activa. */
     private fun drawNavigation() {
         navigation.removeAllViews()
         listOf(
@@ -262,12 +277,14 @@ class MainActivity : AppCompatActivity() {
             navigation.addView(tab, LinearLayout.LayoutParams(0, -1, 1f))
         }
     }
+    /** Devuelve en español el día de la semana actual. */
     private fun todayName() = when (Calendar.getInstance().get(Calendar.DAY_OF_WEEK)) {
         Calendar.MONDAY -> "Lunes"; Calendar.TUESDAY -> "Martes"
         Calendar.WEDNESDAY -> "Miércoles"; Calendar.THURSDAY -> "Jueves"
         Calendar.FRIDAY -> "Viernes"; Calendar.SATURDAY -> "Sábado"; else -> "Domingo"
     }
 
+    /** Dibuja el resumen diario y los accesos a las sesiones de mañana y tarde. */
     private fun today() {
         val body = scrollPage()
         val locale = Locale("es", "ES")
@@ -348,9 +365,10 @@ class MainActivity : AppCompatActivity() {
         add(body, card(tip, pale, pale), top = 16)
     }
 
-    private fun morningDoneToday(): Boolean = getPreferences(MODE_PRIVATE).getString("morningDone", null) ==
-        SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).format(Calendar.getInstance().time)
+    /** Indica si la rutina matinal ya se completó en la fecha local actual. */
+    private fun morningDoneToday(): Boolean = getPreferences(MODE_PRIVATE).getString(MORNING_DONE, null) == todayKey()
 
+    /** Reinicia por completo el estado y el contador de la rutina matinal. */
     private fun resetMorning() {
         morningTimer?.cancel()
         morningTimer = null
@@ -360,6 +378,7 @@ class MainActivity : AppCompatActivity() {
         morningStarted = false
     }
 
+    /** Dibuja el paso activo, los controles y el listado de la rutina matinal. */
     private fun morningPage() {
         val body = scrollPage()
         val steps = plan.morningSteps
@@ -414,11 +433,14 @@ class MainActivity : AppCompatActivity() {
             12f, muted), top = 7)
     }
 
+    /** Suma el tiempo del paso actual y de todos los pasos posteriores. */
     private fun morningSecondsLeft(): Int = morningRemaining +
         plan.morningSteps.drop(morningIndex + 1).sumOf { it.seconds }
 
+    /** Formatea una duración en el formato fijo minutos:segundos. */
     private fun formatTime(seconds: Int) = "%02d:%02d".format(Locale.ROOT, seconds / 60, seconds % 60)
 
+    /** Sincroniza los textos y la acción principal del temporizador matinal. */
     private fun updateMorningClock() {
         morningClock?.text = formatTime(morningRemaining)
         morningTotal?.text = "Quedan ${formatTime(morningSecondsLeft())} de ${formatTime(plan.morningSteps.sumOf { it.seconds })}"
@@ -426,16 +448,19 @@ class MainActivity : AppCompatActivity() {
             "▶  ${if (morningRemaining == plan.morningSteps[morningIndex].seconds) "Empezar" else "Continuar"}"
     }
 
+    /** Inicia o reanuda el contador del paso matinal actual. */
     private fun startMorning() {
         if (morningRunning) return
         morningStarted = true
         morningRunning = true
         updateMorningClock()
         morningTimer = object : CountDownTimer(morningRemaining * 1000L, 1000L) {
+            /** Actualiza el tiempo pendiente una vez por segundo. */
             override fun onTick(millisUntilFinished: Long) {
                 morningRemaining = ((millisUntilFinished + 999) / 1000).toInt()
                 updateMorningClock()
             }
+            /** Avanza automáticamente cuando finaliza el paso activo. */
             override fun onFinish() {
                 morningRemaining = 0
                 morningRunning = false
@@ -445,6 +470,7 @@ class MainActivity : AppCompatActivity() {
         }.start()
     }
 
+    /** Detiene el contador matinal conservando los segundos restantes. */
     private fun pauseMorning() {
         morningTimer?.cancel()
         morningTimer = null
@@ -452,11 +478,11 @@ class MainActivity : AppCompatActivity() {
         if (page == Page.MORNING && morningIndex in plan.morningSteps.indices) updateMorningClock()
     }
 
+    /** Avanza al siguiente paso o registra la rutina como completada hoy. */
     private fun advanceMorning() {
         pauseMorning()
         if (morningIndex == plan.morningSteps.lastIndex) {
-            getPreferences(MODE_PRIVATE).edit().putString("morningDone",
-                SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).format(Calendar.getInstance().time)).apply()
+            getPreferences(MODE_PRIVATE).edit().putString(MORNING_DONE, todayKey()).apply()
             resetMorning()
             Toast.makeText(this, "¡Rutina de mañana completada!", Toast.LENGTH_LONG).show()
             showPage(Page.TODAY)
@@ -467,6 +493,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** Dibuja las semanas y sesiones disponibles con su progreso. */
     private fun routine() {
         val body = scrollPage()
         header(body, "Rutina", "Selecciona una semana y un día")
@@ -506,6 +533,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** Muestra el estado vacío común cuando todavía no existe una rutina. */
     private fun showRoutineEmpty(body: LinearLayout) {
         val panel = col(18)
         add(panel, text("Aún no hay rutina importada", 21f, bold = true))
@@ -517,10 +545,12 @@ class MainActivity : AppCompatActivity() {
         add(body, card(panel, pale, pale))
     }
 
+    /** Abre el selector del sistema limitado a libros XLSX. */
     private fun openRoutinePicker() {
         importPicker.launch(arrayOf("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
     }
 
+    /** Abre una sesión y selecciona el primer ejercicio pendiente. */
     private fun session(week: Int, day: String) {
         if (sessionWeek != week || sessionDay != day) {
             saveSessionFields()
@@ -535,6 +565,7 @@ class MainActivity : AppCompatActivity() {
         renderSession()
     }
 
+    /** Dibuja el ejercicio actual, su registro y el estado del resto de la sesión. */
     private fun renderSession() {
         saveSessionFields()
         val week = sessionWeek
@@ -603,7 +634,7 @@ class MainActivity : AppCompatActivity() {
         }, LinearLayout.LayoutParams(0, dp(48), 1f))
         add(body, controls, bottom = 18)
 
-        val trackNumbers = item.block.lowercase() in listOf("fuerza", "potencia", "accesorio", "core", "estabilidad", "agarre")
+        val trackNumbers = item.block.lowercase(Locale.ROOT) in TRACKABLE_BLOCKS
         val current = progress.getOrPut(item.key()) { ExerciseProgress() }
         val fields = col(14)
         add(fields, text("Tu registro", 17f, bold = true), bottom = 10)
@@ -664,6 +695,7 @@ class MainActivity : AppCompatActivity() {
         add(body, button("Finalizar entrenamiento", false).apply { setOnClickListener { finish(items) } }, top = 12)
     }
 
+    /** Crea un campo compacto para registrar métricas o notas de una serie. */
     private fun sessionEdit(hint: String, value: String, type: Int) = EditText(this).apply {
         this.hint = hint
         inputType = type
@@ -674,6 +706,7 @@ class MainActivity : AppCompatActivity() {
         background = box(Color.WHITE, 9, line)
     }
 
+    /** Copia los campos visibles al progreso y los persiste antes de abandonar el ejercicio. */
     private fun saveSessionFields() {
         val key = sessionFieldKey ?: return
         val current = progress.getOrPut(key) { ExerciseProgress() }
@@ -686,6 +719,7 @@ class MainActivity : AppCompatActivity() {
         RoutineStore.saveProgress(this, progress)
     }
 
+    /** Guarda el ejercicio actual y abre otro índice de la misma sesión. */
     private fun selectSessionExercise(index: Int) {
         saveSessionFields()
         pauseSessionRest()
@@ -693,6 +727,7 @@ class MainActivity : AppCompatActivity() {
         renderSession()
     }
 
+    /** Sincroniza reloj, estado, descanso y botón con la máquina de estados del ejercicio. */
     private fun updateSessionControls(item: RoutineExercise) {
         val run = exerciseRuns.getOrPut(item.key()) { ExerciseRun() }
         val done = progress[item.key()]?.done == true
@@ -728,6 +763,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** Ejecuta la transición solicitada por el botón principal de la sesión. */
     private fun handleSessionAction(item: RoutineExercise) {
         if (progress[item.key()]?.done == true) return
         val run = exerciseRuns.getOrPut(item.key()) { ExerciseRun() }
@@ -745,6 +781,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** Completa trabajo o descanso, guarda el resultado y arranca la fase siguiente. */
     private fun completeSessionPhase(item: RoutineExercise) {
         val run = exerciseRuns[item.key()] ?: return
         val next = when (run.phase) {
@@ -764,16 +801,19 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** Inicia el contador de la fase activa cuando dispone de una duración válida. */
     private fun startSessionTimer(item: RoutineExercise) {
         val run = exerciseRuns[item.key()] ?: return
         if (run.phase !in listOf(ExercisePhase.WORK, ExercisePhase.REST) || run.remainingSeconds <= 0 || sessionRunning) return
         sessionRunning = true
         updateSessionControls(item)
         sessionTimer = object : CountDownTimer(run.remainingSeconds * 1000L, 1000L) {
+            /** Actualiza el estado inmutable y los controles una vez por segundo. */
             override fun onTick(ms: Long) {
                 exerciseRuns[item.key()] = run.copy(remainingSeconds = ((ms + 999) / 1000).toInt())
                 updateSessionControls(item)
             }
+            /** Completa la fase automáticamente cuando el contador llega a cero. */
             override fun onFinish() {
                 sessionTimer = null
                 sessionRunning = false
@@ -782,6 +822,7 @@ class MainActivity : AppCompatActivity() {
         }.start()
     }
 
+    /** Detiene el contador de trabajo o descanso conservando su tiempo pendiente. */
     private fun pauseSessionRest() {
         sessionTimer?.cancel()
         sessionTimer = null
@@ -790,6 +831,7 @@ class MainActivity : AppCompatActivity() {
             updateSessionControls(it)
         }
     }
+    /** Finaliza una sesión y solicita confirmación si quedan ejercicios pendientes. */
     private fun finish(items: List<RoutineExercise>) {
         saveSessionFields()
         pauseSessionRest()
@@ -804,6 +846,7 @@ class MainActivity : AppCompatActivity() {
             }.show()
     }
 
+    /** Dibuja estadísticas agregadas, avance semanal e historial de sesiones. */
     private fun progressPage() {
         val body = scrollPage()
         header(body, "Progreso", "Tu evolución semana a semana")
@@ -832,7 +875,7 @@ class MainActivity : AppCompatActivity() {
         val chart = col(15)
         add(chart, text("Ejercicios completados por semana", 17f, bold = true), bottom = 12)
         plan.weeks().forEach { week ->
-            val items = plan.exercises.filter { it.week == week }
+            val items = plan.forWeek(week)
             val done = items.count { progress[it.key()]?.done == true }
             val entry = row()
             entry.addView(text("S$week", 13f, muted, true), LinearLayout.LayoutParams(dp(30), -2))
@@ -862,6 +905,7 @@ class MainActivity : AppCompatActivity() {
         add(body, card(history))
     }
 
+    /** Dibuja el centro de importación o exportación de la plantilla. */
     private fun templatePage() {
         val body = scrollPage()
         header(body, "Plantilla", "Importa o guarda tu rutina de Excel")
@@ -875,6 +919,7 @@ class MainActivity : AppCompatActivity() {
         add(body, tabs, bottom = 17)
         if (templateExport) exportPanel(body) else importPanel(body)
     }
+    /** Dibuja instrucciones y acciones para importar una rutina XLSX. */
     private fun importPanel(body: LinearLayout) {
         val panel = col(20).apply { gravity = Gravity.CENTER_HORIZONTAL }
         add(panel, text("XLSX", 27f, muted, true).apply { gravity = Gravity.CENTER }, top = 12)
@@ -896,6 +941,7 @@ class MainActivity : AppCompatActivity() {
             setOnClickListener { templateExport = true; templatePage() }
         })
     }
+    /** Dibuja las acciones para guardar o compartir la plantilla incluida. */
     private fun exportPanel(body: LinearLayout) {
         val panel = col(20).apply { gravity = Gravity.CENTER_HORIZONTAL }
         add(panel, text("XLSX", 28f, muted, true).apply { gravity = Gravity.CENTER }, top = 16)
@@ -919,6 +965,7 @@ class MainActivity : AppCompatActivity() {
             "✓  Alternativas y recuperación").forEach { add(includes, text(it, 13f, muted), bottom = 8) }
         add(body, card(includes, pale, pale))
     }
+    /** Copia la plantilla a caché y abre el panel nativo para compartirla. */
     private fun shareTemplate() = try {
         val folder = File(cacheDir, "shared").apply { mkdirs() }
         val file = File(folder, "GymFit_plantilla.xlsx")
@@ -932,20 +979,29 @@ class MainActivity : AppCompatActivity() {
     } catch (e: Exception) {
         Toast.makeText(this, "No se pudo compartir: ${e.message}", Toast.LENGTH_LONG).show()
     }
+    /** Muestra información de la aplicación y el acceso al borrado de progreso. */
     private fun settings() {
         AlertDialog.Builder(this).setTitle("GymFit")
             .setMessage("Entrena hoy. Un mejor mañana.\nTu rutina y tu progreso se guardan en este móvil.")
             .setNegativeButton("Cerrar", null)
             .setNeutralButton("Borrar progreso") { _, _ -> confirmReset() }.show()
     }
+    /** Solicita confirmación antes de eliminar todos los registros de entrenamiento. */
     private fun confirmReset() {
         AlertDialog.Builder(this).setTitle("Borrar progreso")
             .setMessage("Se borrarán pesos, repeticiones, RIR, notas y ejercicios completados. La rutina importada se conserva.")
             .setNegativeButton("Cancelar", null)
             .setPositiveButton("Borrar") { _, _ ->
-                progress.clear(); exerciseRuns.clear(); RoutineStore.clearProgress(this); showPage(Page.PROGRESS)
+                pauseSessionRest()
+                sessionFields = emptyList()
+                sessionFieldKey = null
+                progress.clear()
+                exerciseRuns.clear()
+                RoutineStore.clearProgress(this)
+                showPage(Page.PROGRESS)
             }.show()
     }
+    /** Pausa contadores y persiste ediciones cuando la actividad deja de estar visible. */
     override fun onPause() {
         pauseMorning()
         pauseSessionRest()
@@ -953,6 +1009,28 @@ class MainActivity : AppCompatActivity() {
         super.onPause()
         RoutineStore.saveProgress(this, progress)
     }
-    override fun onDestroy() { morningTimer?.cancel(); sessionTimer?.cancel(); super.onDestroy() }
-    companion object { private const val TEMPLATE = "rutina_plantilla.xlsx" }
+    /** Libera ambos temporizadores antes de destruir la actividad. */
+    override fun onDestroy() {
+        morningTimer?.cancel()
+        sessionTimer?.cancel()
+        super.onDestroy()
+    }
+
+    /** Produce la clave ISO de la fecha local para el registro matinal. */
+    private fun todayKey(): String = SimpleDateFormat(DATE_KEY_PATTERN, Locale.ROOT)
+        .format(Calendar.getInstance().time)
+
+    private companion object {
+        /** Nombre del libro de ejemplo incluido en los recursos. */
+        const val TEMPLATE = "rutina_plantilla.xlsx"
+
+        /** Clave privada que guarda la última rutina matinal completada. */
+        const val MORNING_DONE = "morningDone"
+
+        /** Patrón estable usado para comparar fechas sin depender del idioma. */
+        const val DATE_KEY_PATTERN = "yyyy-MM-dd"
+
+        /** Bloques cuyos ejercicios admiten peso, repeticiones reales y RIR. */
+        val TRACKABLE_BLOCKS = setOf("fuerza", "potencia", "accesorio", "core", "estabilidad", "agarre")
+    }
 }

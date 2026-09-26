@@ -3,7 +3,9 @@ package com.rutinaboxeo.app
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
+/** Comprueba las transiciones puras de la máquina de estados de ejercicios. */
 class ExerciseFlowTest {
+    /** Verifica que un ejercicio con tres series termina después del tercer descanso. */
     @Test fun threeSetsCompleteOnlyAfterTheThirdRest() {
         val exercise = RoutineExercise(1, "Lunes", "Fuerza", "Sentadilla", "3", "10", "30 s")
         var run = ExerciseFlow.start(exercise)
@@ -17,6 +19,7 @@ class ExerciseFlowTest {
         }
     }
 
+    /** Verifica que un calentamiento temporizado usa trabajo y finaliza sin descanso. */
     @Test fun timedWarmupStartsWithWorkTimerAndFinishesWithoutRest() {
         val exercise = RoutineExercise(1, "Lunes", "Calentamiento", "Bicicleta", "-", "5 min", "-")
         val run = ExerciseFlow.start(exercise)

@@ -1,7 +1,9 @@
 <resources>
     <color name="navy">#1B2937</color>
-    <color name="blue">#BE3A41</color>
+    <color name="brand_red">#BE3A41</color>
     <color name="surface">#F8FBFE</color>
+    <color name="surface_muted">#EBF3F9</color>
+    <color name="divider">#E2EBF2</color>
     <color name="white">#FFFFFF</color>
     <color name="text_primary">#1B2937</color>
     <color name="text_secondary">#596A7C</color>
