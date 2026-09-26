@@ -440,6 +440,7 @@ class MainActivity : GymFitActivity() {
         add(panel, text("PASO ${morningIndex + 1} DE ${steps.size}", 13f, red, true))
         add(panel, text(step.title, 24f, bold = true), 9)
         add(panel, text(step.instruction, 15f, muted), 11)
+        addVideoButton(panel, step.videoUrl, step.title)
         morningClock = text(formatTime(morningRemaining), 43f, ink, true).apply { gravity = Gravity.CENTER }
         add(panel, morningClock!!, 23)
         morningTotal = text("Quedan ${formatTime(morningSecondsLeft())} de ${formatTime(total)}", 13f, muted).apply {
@@ -604,6 +605,20 @@ class MainActivity : GymFitActivity() {
         importPicker.launch(arrayOf("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
     }
 
+    /** Añade acceso al vídeo válido y conserva el entrenamiento antes de abrirlo. */
+    private fun addVideoButton(panel: LinearLayout, url: String, title: String) {
+        if (VideoLinks.youtubeId(url) == null) return
+        add(panel, button("Ver vídeo", false).apply {
+            setOnClickListener {
+                saveSessionFields()
+                pauseMorning()
+                pauseSessionRest()
+                startActivity(Intent(this@MainActivity, ExerciseVideoActivity::class.java)
+                    .putExtra("video_url", url).putExtra("exercise_title", title))
+            }
+        }, 12)
+    }
+
     /** Abre una sesión y selecciona el primer ejercicio pendiente. */
     private fun session(week: Int, day: String) {
         saveSessionFields()
@@ -664,6 +679,7 @@ class MainActivity : GymFitActivity() {
         add(panel, text("EJERCICIO ${sessionIndex + 1} DE ${items.size} · ${item.block.uppercase()}", 13f, red, true))
         add(panel, text(item.exercise, 24f, bold = true), 10)
         add(panel, text(ExerciseGuide.forExercise(item), 15f, muted), 11)
+        addVideoButton(panel, item.videoUrl, item.exercise)
         val sets = ExerciseTiming.seriesCount(item.series)
         val rest = ExerciseTiming.restSeconds(item.rest)
         add(panel, text("$sets ${if (sets == 1) "serie" else "series"} · ${item.reps} · ${if (rest > 0) "descanso ${item.rest} tras cada serie" else "sin descanso"}", 13f, ink, true), 13)
