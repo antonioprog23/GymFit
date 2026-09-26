@@ -49,7 +49,12 @@ G Peso | H Reps reales | I RIR | J Nota personal | K Indicaciones | L Vídeo | M
 
 Las columnas de resultados y la hoja `Historial` se exportan para consulta, pero se
 ignoran al importar: cada importación empieza con progreso a cero. Los enlaces
-existentes se conservan; esta versión no añade reproducción de vídeos.
+existentes se conservan. «Ver vídeo» abre los enlaces válidos de YouTube dentro de
+GymFit, tanto en movilidad como en la sesión de tarde. Se admiten enlaces normales,
+cortos, Shorts y emisiones. El entrenamiento queda pausado sin perder sus campos.
+La reproducción requiere Internet; si YouTube restringe el vídeo, usa «Abrir en
+YouTube». El reproductor se carga únicamente al pulsar el botón y conserva sus
+controles oficiales. No se descargan vídeos ni se necesitan claves de API.
 
 ## Rutinas mensuales e histórico
 
