@@ -19,6 +19,11 @@ Aplicación Android nativa y local para seguir una rutina de boxeo y gimnasio a 
 
 ## Apariencia
 
+En Ajustes, «Sonido de descanso» activa o silencia los avisos (activados por defecto).
+Suena un pitido a los 5, 4, 3, 2 y 1 segundos restantes y un tono distinto al terminar.
+Solo se aplica a los descansos de la sesión de tarde, utiliza el volumen multimedia
+y conserva la elección al cerrar la aplicación. Al pausar o salir, se silencia.
+
 El botón de sol/luna de la cabecera alterna entre tema claro y oscuro. La elección
 se guarda en preferencias privadas y se recupera al abrir la aplicación; inicialmente
 se utiliza el tema del dispositivo. El cambio conserva la pantalla, los campos y las
