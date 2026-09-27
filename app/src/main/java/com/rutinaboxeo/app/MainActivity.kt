@@ -1207,7 +1207,47 @@ class MainActivity : GymFitActivity() {
         val scroll = ScrollView(this).apply { addView(body) }
         AlertDialog.Builder(this).setTitle(document.label()).setView(scroll)
             .setPositiveButton("Exportar este mes") { _, _ -> downloadWorkbook(document) }
+            .setNeutralButton("Eliminar rutina") { _, _ -> confirmDeleteRoutine(document.id) }
             .setNegativeButton("Cerrar", null).show()
+    }
+
+    /** Confirma el alcance del borrado y ofrece exportar sin eliminar automáticamente después. */
+    private fun confirmDeleteRoutine(id: String) {
+        try {
+            val document = monthly.read(id)
+            val active = monthly.active()?.id == id
+            if (active && (morningRunning || sessionRunning || document.workouts.any {
+                    it.kind != "anterior" && it.finishedAt.isBlank()
+                })) {
+                AlertDialog.Builder(this).setTitle("Entrenamiento pendiente")
+                    .setMessage("Finaliza los entrenamientos pendientes de esta rutina antes de eliminarla. Pausar el temporizador no finaliza el entrenamiento.")
+                    .setPositiveButton("Entendido", null).show()
+                return
+            }
+            AlertDialog.Builder(this).setTitle("Eliminar ${document.label()}")
+                .setMessage("Importación: ${document.id}\n\nSe eliminarán esta rutina y todos sus entrenamientos y resultados. No se puede deshacer. Las demás rutinas no se modificarán.\n\n" +
+                    (if (active) "La aplicación quedará sin rutina activa hasta que importes otra.\n\n" else "") +
+                    "Puedes exportar antes. La Excel permite consultar los resultados, pero al reimportarla no recupera el historial.")
+                .setNegativeButton("Cancelar", null)
+                .setNeutralButton("Exportar antes") { _, _ -> downloadWorkbook(document) }
+                .setPositiveButton("Eliminar definitivamente") { _, _ ->
+                    try {
+                        saveSessionFields()
+                        val deletedActive = monthly.delete(id)
+                        if (deletedActive) {
+                            autosaveHandler.removeCallbacks(autosave)
+                            restSound.stop()
+                            activateImportedPlan()
+                        }
+                        Toast.makeText(this, "Rutina eliminada. No se puede deshacer.", Toast.LENGTH_LONG).show()
+                        showMonthlyRoutines()
+                    } catch (error: Exception) {
+                        Toast.makeText(this, "No se pudo eliminar: ${error.message}", Toast.LENGTH_LONG).show()
+                    }
+                }.show()
+        } catch (error: Exception) {
+            Toast.makeText(this, "No se pudo leer la rutina: ${error.message}", Toast.LENGTH_LONG).show()
+        }
     }
 
     /** Muestra información de la aplicación y el acceso al borrado de progreso. */

@@ -8,6 +8,56 @@ import java.time.YearMonth
 
 /** Verifica aislamiento mensual, reanudación, repetición y migración sin fechas inventadas. */
 class MonthlyRepositoryTest {
+    /** Borrar una importación duplicada no modifica ni activa ni elimina sus hermanas. */
+    @Test fun deletesOnlySelectedHistoricalImport() {
+        val repository = MonthlyRepository(temporary.newFolder())
+        val first = repository.create(plan, YearMonth.of(2026, 9))
+        repository.begin(1, "Lunes")
+        val second = repository.create(plan, first.month)
+        assertFalse(repository.delete(first.id))
+        assertEquals(second.id, repository.active()!!.id)
+        assertEquals(listOf(second.id), repository.list().map { it.id })
+    }
+
+    /** El borrado activo sobrevive al reinicio sin seleccionar históricos ni recuperar datos heredados. */
+    @Test fun activeDeletionLeavesPersistentEmptySelection() {
+        val folder = temporary.newFolder()
+        val repository = MonthlyRepository(folder)
+        val historical = repository.create(plan, YearMonth.of(2026, 8))
+        val active = repository.create(plan, YearMonth.of(2026, 9))
+        assertTrue(repository.delete(active.id))
+        val reopened = MonthlyRepository(folder)
+        assertNull(reopened.active())
+        assertTrue(reopened.hasMonthlyState())
+        assertEquals(historical.id, reopened.list().single().id)
+        val next = reopened.create(plan, YearMonth.of(2026, 10))
+        assertEquals(next.id, reopened.active()!!.id)
+    }
+
+    /** Una sesión pausada sigue pendiente y bloquea el borrado hasta su finalización. */
+    @Test fun unfinishedWorkoutsBlockActiveDeletion() {
+        val repository = MonthlyRepository(temporary.newFolder())
+        val active = repository.create(plan, YearMonth.of(2026, 9))
+        repository.begin(1, "Lunes")
+        assertTrue(runCatching { repository.delete(active.id) }.exceptionOrNull() is IllegalStateException)
+        assertEquals(active.id, repository.active()!!.id)
+        repository.finish(1, "Lunes")
+        repository.beginMorning()
+        assertTrue(runCatching { repository.delete(active.id) }.isFailure)
+        repository.finishMorning()
+        assertTrue(repository.delete(active.id))
+        assertTrue(repository.list().isEmpty())
+    }
+
+    /** Las rutas ajenas y los identificadores inexistentes no cambian la selección activa. */
+    @Test fun invalidDeletionDoesNotChangeData() {
+        val repository = MonthlyRepository(temporary.newFolder())
+        val active = repository.create(plan, YearMonth.of(2026, 9))
+        assertTrue(runCatching { repository.delete("../09_2026") }.isFailure)
+        assertTrue(runCatching { repository.delete("01_2020") }.isFailure)
+        assertEquals(active.id, repository.active()!!.id)
+    }
+
     /** Carpeta desechable exclusiva de cada prueba. */
     @get:Rule val temporary = TemporaryFolder()
     /** Plan mínimo con una sesión de tarde. */

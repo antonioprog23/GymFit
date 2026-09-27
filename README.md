@@ -63,6 +63,14 @@ controles oficiales. No se descargan vídeos ni se necesitan claves de API.
 
 ## Rutinas mensuales e histórico
 
+En «Mis rutinas», abre una importación y pulsa «Eliminar rutina». La confirmación
+identifica el documento exacto y advierte de que el borrado no se puede deshacer.
+«Exportar antes» solo exporta: después hay que volver a solicitar el borrado.
+La Excel conserva los resultados para consulta, pero no restaura el historial al importarla.
+Las rutinas activas con entrenamientos pendientes no se pueden eliminar; primero
+deben finalizarse. Al borrar la activa, no se selecciona otra automáticamente ni
+se recuperan datos antiguos. Los demás documentos permanecen intactos.
+
 - Una importación crea un documento en la carpeta privada `files/routines/`.
 - Nombres: `09_2026.json`, `09_2026_1.json`, `09_2026_2.json`… sin sobrescrituras.
 - `active.txt` identifica la rutina activa. Las demás permanecen en el histórico.
