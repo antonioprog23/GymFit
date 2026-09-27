@@ -20,7 +20,28 @@ class MonthlyRepository(
     @Synchronized fun active(): MonthlyRoutine? {
         val pointer = File(folder, "active.txt")
         if (!pointer.exists()) return null
-        return read(pointer.readText().trim())
+        return pointer.readText().trim().takeIf { it.isNotEmpty() }?.let(::read)
+    }
+
+    /** Indica que el almacenamiento mensual ya sustituyó a las preferencias antiguas. */
+    fun hasMonthlyState(): Boolean = File(folder, "active.txt").exists()
+
+    /** Elimina una importación concreta; una activa con entrenamientos pendientes queda protegida. */
+    @Synchronized fun delete(id: String): Boolean {
+        val document = read(id)
+        val wasActive = active()?.id == id
+        check(!wasActive || document.workouts.none { it.kind != "anterior" && it.finishedAt.isBlank() }) {
+            "Finaliza los entrenamientos pendientes antes de eliminar la rutina activa."
+        }
+        val pointer = File(folder, "active.txt")
+        if (wasActive) writeAtomic(pointer, "")
+        try {
+            Files.delete(File(folder, "$id.json").toPath())
+        } catch (error: Exception) {
+            if (wasActive) writeAtomic(pointer, id)
+            throw error
+        }
+        return wasActive
     }
 
     /** Lee un documento validando antes su identificador y su versión. */
