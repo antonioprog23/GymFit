@@ -41,6 +41,9 @@ class XlsxRoutineParserTest {
         assertTrue(plan.exercises.flatMap { it.alternatives }.all { it.title.isNotBlank() })
         assertEquals(6, plan.morningSteps.size)
         assertEquals("Estiramiento suave", plan.morningSteps.last().title)
+        val videoExamples = plan.exercises.filter { it.exercise == "Sentadillas sin peso" }
+        assertEquals(listOf(1, 2, 3, 4), videoExamples.map { it.week }.distinct())
+        assertTrue(videoExamples.all { VideoLinks.youtubeId(it.videoUrl) == "50KX3DZxw60" })
     }
 
     /** Construye un ZIP mínimo en memoria para probar entradas no confiables. */

@@ -91,6 +91,8 @@ class MainActivity : GymFitActivity() {
     private var sessionTimer: CountDownTimer? = null
     /** Indica si el temporizador de sesión está avanzando. */
     private var sessionRunning = false
+    /** Avisos configurables para los últimos segundos de cada descanso. */
+    private val restSound by lazy { RestCountdownSound(this) }
     /** Referencia al reloj visible del ejercicio. */
     private var sessionClock: TextView? = null
     /** Referencia a la descripción de fase del ejercicio. */
@@ -910,10 +912,12 @@ class MainActivity : GymFitActivity() {
         if (run.phase !in listOf(ExercisePhase.WORK, ExercisePhase.REST) || run.remainingSeconds <= 0 || sessionRunning) return
         sessionRunning = true
         updateSessionControls(item)
+        if (run.phase == ExercisePhase.REST) restSound.start(run.remainingSeconds)
         sessionTimer = object : CountDownTimer(run.remainingSeconds * 1000L, 1000L) {
             /** Actualiza el estado inmutable y los controles una vez por segundo. */
             override fun onTick(ms: Long) {
                 exerciseRuns[item.key()] = run.copy(remainingSeconds = ((ms + 999) / 1000).toInt())
+                if (run.phase == ExercisePhase.REST) restSound.tick(((ms + 999) / 1000).toInt())
                 updateSessionControls(item)
             }
             /** Completa la fase automáticamente cuando el contador llega a cero. */
@@ -921,12 +925,14 @@ class MainActivity : GymFitActivity() {
                 sessionTimer = null
                 sessionRunning = false
                 completeSessionPhase(item)
+                if (run.phase == ExercisePhase.REST) restSound.finish()
             }
         }.start()
     }
 
     /** Detiene el contador de trabajo o descanso conservando su tiempo pendiente. */
     private fun pauseSessionRest() {
+        restSound.stop()
         sessionTimer?.cancel()
         sessionTimer = null
         sessionRunning = false
@@ -1206,8 +1212,17 @@ class MainActivity : GymFitActivity() {
 
     /** Muestra información de la aplicación y el acceso al borrado de progreso. */
     private fun settings() {
+        val options = col(20)
+        add(options, text("Tu rutina y tu progreso se guardan en este móvil.", 14f, muted))
+        add(options, com.google.android.material.switchmaterial.SwitchMaterial(this).apply {
+            text = "Sonido de descanso"
+            setTextColor(ink)
+            isChecked = restSound.enabled
+            setOnCheckedChangeListener { _, enabled -> restSound.enabled = enabled }
+        }, 12)
+        add(options, text("Pitidos a los 5, 4, 3, 2 y 1 segundos; un tono distinto al terminar. Usa el volumen multimedia.", 13f, muted), 8)
         AlertDialog.Builder(this).setTitle("GymFit")
-            .setMessage("Entrena hoy. Un mejor mañana.\nTu rutina y tu progreso se guardan en este móvil.")
+            .setView(options)
             .setNegativeButton("Cerrar", null)
             .setNeutralButton("Borrar progreso") { _, _ -> confirmReset() }.show()
     }
@@ -1239,6 +1254,7 @@ class MainActivity : GymFitActivity() {
         autosaveHandler.removeCallbacks(autosave)
         morningTimer?.cancel()
         sessionTimer?.cancel()
+        restSound.release()
         super.onDestroy()
     }
 

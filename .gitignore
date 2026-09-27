@@ -20,3 +20,6 @@ workbook_tools/
 *.log
 .DS_Store
 Thumbs.db
+
+#Release
+app/release/
