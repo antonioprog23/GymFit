@@ -39,5 +39,7 @@ data class WorkoutRecord(
     /** Resultados de esta realización, independientes de repeticiones posteriores. */
     val results: MutableMap<String, ExerciseProgress> = mutableMapOf(),
     /** Distingue tarde, mañana y datos anteriores sin fecha. */
-    val kind: String = "tarde"
+    val kind: String = "tarde",
+    /** Día real del mes; vacío para realizaciones antiguas organizadas por semanas. */
+    val dayOfMonth: Int? = null
 )

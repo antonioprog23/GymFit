@@ -4,18 +4,14 @@ import org.w3c.dom.Element
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
+import java.time.DayOfWeek
+import java.time.YearMonth
 import java.util.zip.ZipInputStream
 import javax.xml.parsers.DocumentBuilderFactory
 import kotlin.math.roundToInt
 
 /** Importa la plantilla XLSX sin depender de una biblioteca ofimática pesada. */
 object XlsxRoutineParser {
-    /** Días admitidos en las hojas de sesiones. */
-    private val dayNames = setOf("Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo")
-
-    /** Expresión reutilizada para reconocer hojas semanales. */
-    private val weekName = Regex("Semana\\s+(\\d+)", RegexOption.IGNORE_CASE)
-
     /** Datos auxiliares que enriquecen un ejercicio principal. */
     private data class AlternativeData(
         /** Observación aplicable al ejercicio principal. */
@@ -23,6 +19,9 @@ object XlsxRoutineParser {
         /** Sustituciones permitidas para el ejercicio. */
         val exercises: List<ExerciseAlternative>
     )
+
+    /** Fila de ejercicio mensual pendiente de validar cuando se conozca el período completo. */
+    private data class MonthlyExerciseData(val dayOfMonth: Int, val row: Map<Int, String>)
 
     /** Lee un archivo XLSX y construye un plan validado y ordenado. */
     fun parse(input: InputStream): RoutinePlan {
@@ -33,12 +32,14 @@ object XlsxRoutineParser {
         val sheets = parseWorkbook(files["xl/workbook.xml"] ?: error("Excel no válido: falta workbook"))
 
         val result = mutableListOf<RoutineExercise>()
-        val recovery = mutableListOf<RoutineExercise>()
         val alternatives = mutableMapOf<String, AlternativeData>()
-        val sessions = mutableMapOf<String, SessionInfo>()
         val morning = mutableListOf<Pair<Int, MorningStep>>()
+        val monthlyExercises = mutableListOf<MonthlyExerciseData>()
+        val calendar = mutableMapOf<Int, CalendarDay>()
         var morningSheetFound = false
-        var month: java.time.YearMonth? = null
+        var month: YearMonth? = null
+        var calendarSheetFound = false
+        var routineSheetFound = false
 
         sheets.forEach { (name, rId) ->
             val target = rels[rId] ?: return@forEach
@@ -46,15 +47,40 @@ object XlsxRoutineParser {
             val xml = files[normalized] ?: files["xl/worksheets/${target.substringAfterLast('/')}"] ?: return@forEach
             val rows = parseSheet(xml, shared)
 
-            val week = weekName.find(name)?.groupValues?.get(1)?.toIntOrNull()
             when {
                 name.equals("Periodo", true) -> {
-                    val monthValue = rows.firstOrNull { it[0] == "Mes" }?.get(1)?.toDoubleOrNull()?.toInt()
-                    val yearValue = rows.firstOrNull { it[0] == "Año" }?.get(1)?.toDoubleOrNull()?.toInt()
+                    val monthValue = wholeNumber(rows.firstOrNull { it[0] == "Mes" }?.get(1))
+                    val yearValue = wholeNumber(rows.firstOrNull { it[0] == "Año" }?.get(1))
                     require(monthValue != null && monthValue in 1..12 && yearValue != null && yearValue in 1900..9999) {
                         "La hoja Periodo necesita Mes (1–12) y Año (1900–9999)"
                     }
-                    month = java.time.YearMonth.of(yearValue, monthValue)
+                    month = YearMonth.of(yearValue, monthValue)
+                }
+                name.equals("Calendario", true) -> {
+                    calendarSheetFound = true
+                    rows.forEach calendarRow@{ row ->
+                        val rawDay = row[0]?.trim().orEmpty()
+                        if (rawDay.isBlank() || rawDay.equals("Día", true) || isDecorativeRow(row, rawDay)) return@calendarRow
+                        val day = requireNotNull(wholeNumber(rawDay)) { "Calendario contiene un día no entero: $rawDay" }
+                        require(day !in calendar) { "El día $day está repetido en Calendario" }
+                        calendar[day] = CalendarDay(
+                            dayOfMonth = day,
+                            type = row[3].orEmpty().ifBlank { "Entrenamiento" },
+                            title = row[4].orEmpty().ifBlank { "Día $day" },
+                            focus = row[5].orEmpty(), note = row[6].orEmpty(), phase = row[7].orEmpty(),
+                            intensity = row[8].orEmpty(), rule = row[9].orEmpty()
+                        )
+                    }
+                }
+                name.equals("Rutina", true) -> {
+                    routineSheetFound = true
+                    rows.forEach monthlyRow@{ row ->
+                        val rawDay = row[0]?.trim().orEmpty()
+                        if (rawDay.isBlank() || rawDay.equals("Día", true) || isDecorativeRow(row, rawDay)) return@monthlyRow
+                        val day = requireNotNull(wholeNumber(rawDay)) { "Rutina contiene un día no entero: $rawDay" }
+                        val exercise = row[2]?.trim().orEmpty()
+                        if (exercise.isNotBlank()) monthlyExercises += MonthlyExerciseData(day, row)
+                    }
                 }
                 name.equals("Mañana", true) || name.equals("Manana", true) -> {
                     morningSheetFound = true
@@ -68,43 +94,6 @@ object XlsxRoutineParser {
                         }
                         morning += order to MorningStep(title, (minutes * 60).roundToInt().coerceAtLeast(1), instruction,
                             VideoLinks.clean(row[4].orEmpty()))
-                    }
-                }
-                name.equals("Inicio", true) -> {
-                    rows.forEach startRow@{ row ->
-                        val day = row[0]?.trim().orEmpty()
-                        val title = row[1]?.trim().orEmpty()
-                        if (day in dayNames && title.isNotBlank()) {
-                            sessions[day] = SessionInfo(title, row[2].orEmpty(), row[3].orEmpty())
-                        }
-                    }
-                }
-                week != null -> {
-                    var order = 0
-                    rows.forEach weekRow@{ row ->
-                        val day = row[0]?.trim().orEmpty()
-                        val exercise = row[2]?.trim().orEmpty()
-                        if (day in dayNames && exercise.isNotBlank()) {
-                            result += RoutineExercise(
-                                week = week, day = day, block = row[1].orEmpty(), exercise = exercise,
-                                series = row[3].orEmpty(), reps = row[4].orEmpty(), rest = row[5].orEmpty(), order = order++,
-                                instruction = row[10].orEmpty(), videoUrl = VideoLinks.clean(row[11].orEmpty()),
-                                note = row[12].orEmpty()
-                            )
-                        }
-                    }
-                }
-                name.equals("Recuperación", true) || name.equals("Recuperacion", true) -> {
-                    var order = 0
-                    rows.forEach recoveryRow@{ row ->
-                        val exercise = row[1]?.trim().orEmpty()
-                        if (exercise.isNotBlank() && row[0]?.trim()?.toIntOrNull() != null) {
-                            recovery += RoutineExercise(
-                                week = 0, day = "Viernes", block = "Recuperación", exercise = exercise,
-                                series = row[2].orEmpty(), reps = row[3].orEmpty(), rest = row[4].orEmpty(),
-                                order = order++, instruction = row[5].orEmpty(), videoUrl = VideoLinks.clean(row[6].orEmpty())
-                            )
-                        }
                     }
                 }
                 name.equals("Alternativas", true) -> {
@@ -129,15 +118,42 @@ object XlsxRoutineParser {
             }
         }
 
-        if (result.isEmpty()) error("No se encontraron hojas 'Semana 1', 'Semana 2'... en la plantilla")
-        if (morningSheetFound && morning.isEmpty()) error("La hoja Mañana no contiene ejercicios")
-        if (recovery.isNotEmpty()) {
-            val weeks = result.map { it.week }.distinct()
-            result.removeAll { it.day == "Viernes" }
-            weeks.forEach { w ->
-                recovery.forEachIndexed { idx, r -> result += r.copy(week = w, order = 1000 + idx) }
-            }
+        require(calendarSheetFound && routineSheetFound) {
+            "Esta plantilla semanal está obsoleta. Usa la plantilla mensual con las hojas Periodo, Calendario y Rutina."
         }
+        val period = requireNotNull(month) { "La plantilla necesita una hoja Periodo con Mes y Año" }
+        val validDays = (1..period.lengthOfMonth()).toSet()
+        require(calendar.keys == validDays) {
+            val missing = (validDays - calendar.keys).sorted()
+            val invalid = (calendar.keys - validDays).sorted()
+            listOfNotNull(
+                missing.takeIf { it.isNotEmpty() }?.let { "faltan ${it.joinToString()}" },
+                invalid.takeIf { it.isNotEmpty() }?.let { "sobran ${it.joinToString()}" }
+            ).joinToString("; ", prefix = "Calendario no coincide con $period: ")
+        }
+        require(monthlyExercises.isNotEmpty()) { "La hoja Rutina no contiene ejercicios" }
+        val routineDays = monthlyExercises.map { it.dayOfMonth }.toSet()
+        require(routineDays.all { it in calendar }) { "Rutina contiene días que no existen en Calendario" }
+        require(routineDays == validDays) {
+            "Cada día del mes debe tener al menos un ejercicio; faltan ${(validDays - routineDays).sorted().joinToString()}"
+        }
+        val orders = mutableMapOf<Int, Int>()
+        result.clear()
+        monthlyExercises.forEach { data ->
+            val row = data.row
+            val order = orders.getOrDefault(data.dayOfMonth, 0)
+            orders[data.dayOfMonth] = order + 1
+            result += RoutineExercise(
+                week = (data.dayOfMonth - 1) / 7 + 1,
+                day = dayName(period, data.dayOfMonth),
+                block = row[1].orEmpty(), exercise = row[2].orEmpty(), series = row[3].orEmpty(),
+                reps = row[4].orEmpty(), rest = row[5].orEmpty(), note = row[12].orEmpty(), order = order,
+                instruction = row[10].orEmpty(), videoUrl = VideoLinks.clean(row[11].orEmpty()),
+                dayOfMonth = data.dayOfMonth
+            )
+        }
+
+        if (morningSheetFound && morning.isEmpty()) error("La hoja Mañana no contiene ejercicios")
 
         val enriched = result.map { e ->
             val extra = alternatives[e.exercise] ?: return@map e
@@ -148,10 +164,32 @@ object XlsxRoutineParser {
         }
 
         return RoutinePlan(
-            enriched.sortedWith(compareBy<RoutineExercise> { it.week }.thenBy { dayIndex(it.day) }.thenBy { it.order }),
-            sessions,
-            morning.sortedBy { it.first }.map { it.second }, month
+            enriched.sortedWith(compareBy<RoutineExercise> { it.dayOfMonth }.thenBy { it.order }),
+            emptyMap(),
+            morning.sortedBy { it.first }.map { it.second }, month, calendar.toSortedMap()
         )
+    }
+
+    /** Convierte solo números enteros, aunque Excel los serialice con decimal cero. */
+    private fun wholeNumber(value: String?): Int? {
+        val number = value?.trim()?.replace(',', '.')?.toDoubleOrNull() ?: return null
+        if (!number.isFinite() || number % 1.0 != 0.0 || number !in Int.MIN_VALUE.toDouble()..Int.MAX_VALUE.toDouble()) return null
+        return number.toInt()
+    }
+
+    /** Reconoce títulos y subtítulos combinados que Excel replica en varias celdas. */
+    private fun isDecorativeRow(row: Map<Int, String>, firstValue: String): Boolean =
+        wholeNumber(firstValue) == null && row.values.filter { it.isNotBlank() }.distinct().size == 1
+
+    /** Calcula el nombre español del día de la semana correspondiente a una fecha mensual. */
+    private fun dayName(month: YearMonth, dayOfMonth: Int): String = when (month.atDay(dayOfMonth).dayOfWeek) {
+        DayOfWeek.MONDAY -> "Lunes"
+        DayOfWeek.TUESDAY -> "Martes"
+        DayOfWeek.WEDNESDAY -> "Miércoles"
+        DayOfWeek.THURSDAY -> "Jueves"
+        DayOfWeek.FRIDAY -> "Viernes"
+        DayOfWeek.SATURDAY -> "Sábado"
+        DayOfWeek.SUNDAY -> "Domingo"
     }
 
     /** Lee el contenedor ZIP con límites para evitar archivos descomprimidos desproporcionados. */
@@ -183,9 +221,6 @@ object XlsxRoutineParser {
         }
         return files
     }
-
-    /** Devuelve la posición natural de un día de la semana. */
-    private fun dayIndex(day: String) = dayNames.indexOf(day)
 
     /** Extrae la tabla de textos compartidos utilizada por las celdas XLSX. */
     private fun parseSharedStrings(bytes: ByteArray?): List<String> {

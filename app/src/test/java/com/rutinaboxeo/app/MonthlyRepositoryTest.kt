@@ -5,6 +5,8 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.time.YearMonth
+import java.io.File
+import org.json.JSONObject
 
 /** Verifica aislamiento mensual, reanudación, repetición y migración sin fechas inventadas. */
 class MonthlyRepositoryTest {
@@ -98,6 +100,22 @@ class MonthlyRepositoryTest {
         assertTrue(records[0].finishedAt.isNotBlank())
     }
 
+    /** Las sesiones mensuales se reanudan y persisten con su día real. */
+    @Test fun monthlyWorkoutUsesCalendarDay() {
+        val repository = MonthlyRepository(temporary.newFolder())
+        val exercise = RoutineExercise(1, "Martes", "Fuerza", "Remo", "3", "10", "60 s", dayOfMonth = 1)
+        val monthlyPlan = RoutinePlan(listOf(exercise), month = YearMonth.of(2026, 9),
+            calendar = mapOf(1 to CalendarDay(1, "Entrenamiento", "Torso")))
+        repository.create(monthlyPlan, YearMonth.of(2026, 9))
+        repository.beginDate(1)
+        repository.beginDate(1)
+        assertEquals(1, repository.active()!!.workouts.size)
+        assertEquals(1, repository.active()!!.workouts.single().dayOfMonth)
+        repository.finishDate(1)
+        assertTrue(repository.active()!!.workouts.single().finishedAt.isNotBlank())
+        assertTrue(runCatching { repository.beginDate(31) }.isFailure)
+    }
+
     /** Los datos heredados conservan notas y resultados con fecha desconocida. */
     @Test fun migrationPreservesUndatedResults() {
         val repository = MonthlyRepository(temporary.newFolder())
@@ -108,6 +126,24 @@ class MonthlyRepositoryTest {
         assertEquals(legacy, restored.progress)
         assertEquals("", restored.workouts.single().startedAt)
         assertEquals("anterior", restored.workouts.single().kind)
+    }
+
+    /** Los documentos de esquema 2 permanecen legibles sin inventar un día del mes. */
+    @Test fun readsSchemaTwoAsLegacyHistory() {
+        val folder = temporary.newFolder()
+        val repository = MonthlyRepository(folder)
+        val saved = repository.create(plan, YearMonth.of(2026, 8))
+        repository.begin(1, "Lunes")
+        repository.finish(1, "Lunes")
+        val file = File(folder, "${saved.id}.json")
+        val root = JSONObject(file.readText()).put("schemaVersion", 2)
+        val workouts = root.getJSONArray("workouts")
+        for (index in 0 until workouts.length()) workouts.getJSONObject(index).remove("dayOfMonth")
+        file.writeText(root.toString(2))
+
+        val restored = MonthlyRepository(folder).read(saved.id)
+        assertNull(restored.workouts.single().dayOfMonth)
+        assertEquals("Lunes", restored.workouts.single().day)
     }
 
     /** La consulta de un identificador externo no puede salir de la carpeta privada. */
