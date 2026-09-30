@@ -25,10 +25,12 @@ data class RoutineExercise(
     /** Enlace HTTPS opcional a una demostración. */
     val videoUrl: String = "",
     /** Sustituciones válidas para el ejercicio principal. */
-    val alternatives: List<ExerciseAlternative> = emptyList()
+    val alternatives: List<ExerciseAlternative> = emptyList(),
+    /** Día real del mes para las plantillas mensuales; vacío en planes antiguos por semanas. */
+    val dayOfMonth: Int? = null
 ) {
     /** Genera la clave estable utilizada para asociar el progreso local. */
-    fun key(): String = "$week|$day|$order|$exercise"
+    fun key(): String = dayOfMonth?.let { "date|$it|$order|$exercise" } ?: "$week|$day|$order|$exercise"
 }
 
 /** Alternativa de un ejercicio con instrucciones y vídeo opcionales. */
@@ -51,16 +53,38 @@ data class SessionInfo(
     val note: String = ""
 )
 
+/** Metadatos de una fecha concreta dentro de una rutina mensual. */
+data class CalendarDay(
+    /** Número de día dentro del mes. */
+    val dayOfMonth: Int,
+    /** Tipo de jornada: entrenamiento, recuperación o descanso. */
+    val type: String,
+    /** Título principal de la sesión. */
+    val title: String,
+    /** Objetivo o zona de trabajo. */
+    val focus: String = "",
+    /** Consejo u observación de ese día. */
+    val note: String = "",
+    /** Fase de carga indicada en la plantilla. */
+    val phase: String = "",
+    /** Intensidad prevista. */
+    val intensity: String = "",
+    /** Regla de ejecución de la fase. */
+    val rule: String = ""
+)
+
 /** Plan completo importado, con sesiones de tarde y rutina matinal. */
 data class RoutinePlan(
-    /** Ejercicios de todas las semanas del plan. */
+    /** Ejercicios del plan mensual o, únicamente en datos históricos, del formato semanal anterior. */
     val exercises: List<RoutineExercise>,
     /** Información de sesión indexada por día de la semana. */
     val sessions: Map<String, SessionInfo> = emptyMap(),
     /** Pasos ordenados de la rutina de mañana. */
     val morningSteps: List<MorningStep> = emptyList(),
-    /** Mes indicado en la hoja Periodo; vacío para plantillas antiguas. */
-    val month: java.time.YearMonth? = null
+    /** Mes indicado en la hoja Periodo; vacío solo en datos históricos antiguos. */
+    val month: java.time.YearMonth? = null,
+    /** Metadatos indexados por día real del mes; vacío solo en datos históricos antiguos. */
+    val calendar: Map<Int, CalendarDay> = emptyMap()
 ) {
     /** Ejercicios indexados una vez para evitar filtros repetidos al dibujar pantallas. */
     private val exercisesBySession by lazy(LazyThreadSafetyMode.NONE) {
@@ -72,10 +96,16 @@ data class RoutinePlan(
         exercises.asSequence().map { it.week }.distinct().sorted().toList()
     }
 
+    /** Ejercicios mensuales indexados por su fecha concreta. */
+    private val exercisesByDate by lazy(LazyThreadSafetyMode.NONE) {
+        exercises.filter { it.dayOfMonth != null }.groupBy { it.dayOfMonth!! }
+            .mapValues { (_, values) -> values.sortedBy { it.order } }
+    }
+
     /** Indica si otro plan conserva exactamente la estructura de ejercicios. */
     fun hasSameExerciseStructure(other: RoutinePlan): Boolean =
         exercises.size == other.exercises.size && exercises.zip(other.exercises).all { (first, second) ->
-            first.week == second.week && first.day == second.day && first.block == second.block &&
+            first.week == second.week && first.day == second.day && first.dayOfMonth == second.dayOfMonth && first.block == second.block &&
                 first.exercise == second.exercise && first.series == second.series && first.reps == second.reps &&
                 first.rest == second.rest && first.order == second.order
         }
@@ -99,6 +129,23 @@ data class RoutinePlan(
 
     /** Devuelve todos los ejercicios de una semana agrupados por el orden natural de sus días. */
     fun forWeek(week: Int): List<RoutineExercise> = days(week).flatMap { day -> forDay(week, day) }
+
+    /** Indica que el plan utiliza fechas mensuales en lugar de hojas semanales. */
+    fun isMonthlyCalendar(): Boolean = calendar.isNotEmpty() || exercisesByDate.isNotEmpty()
+
+    /** Devuelve todos los días definidos por la planificación mensual. */
+    fun dateDays(): List<Int> = month?.let { (1..it.lengthOfMonth()).toList() }
+        ?: (calendar.keys + exercisesByDate.keys).distinct().sorted()
+
+    /** Devuelve los ejercicios asociados a un día real del mes. */
+    fun forDate(dayOfMonth: Int): List<RoutineExercise> = exercisesByDate[dayOfMonth].orEmpty()
+
+    /** Devuelve los metadatos de una fecha o construye un resumen seguro desde sus ejercicios. */
+    fun calendarDay(dayOfMonth: Int): CalendarDay = calendar[dayOfMonth] ?: CalendarDay(
+        dayOfMonth = dayOfMonth,
+        type = if (forDate(dayOfMonth).any { it.block.equals("Descanso", true) }) "Descanso" else "Entrenamiento",
+        title = forDate(dayOfMonth).firstOrNull()?.block ?: "Día $dayOfMonth"
+    )
 
     /** Convierte un día en su posición semanal para mantener un orden coherente. */
     private fun dayIndex(day: String): Int = DAY_ORDER.indexOf(day).let { if (it >= 0) it else Int.MAX_VALUE }

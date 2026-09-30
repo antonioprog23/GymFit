@@ -9,51 +9,72 @@ import java.util.zip.ZipOutputStream
 object RoutineWorkbook {
     /** Exporta una sola rutina, o una plantilla sin resultados cuando no se facilita documento. */
     fun write(output: OutputStream, plan: RoutinePlan, month: YearMonth, document: MonthlyRoutine? = null) {
+        require(document != null || plan.isMonthlyCalendar()) { "La plantilla nueva debe utilizar un calendario mensual" }
+        val exportPlan = if (plan.isMonthlyCalendar()) MonthlyPlanTemplate.forMonth(plan, month) else plan
+        val historicalOnly = !exportPlan.isMonthlyCalendar()
         val sheets = linkedMapOf<String, List<List<Any>>>()
         sheets["Periodo"] = listOf(listOf("Campo", "Valor"), listOf("Mes", month.monthValue),
             listOf("Año", month.year), listOf("Importación", document?.id ?: "Plantilla"))
-        sheets["Instrucciones"] = listOf(listOf("Tema", "Cómo rellenar la plantilla"),
+        sheets["Instrucciones"] = if (historicalOnly) listOf(
+            listOf("Tema", "Informe de una rutina anterior"),
+            listOf("Uso", "Consulta el plan y sus resultados en Plan anterior e Historial."),
+            listOf("Fechas", "Las fechas desconocidas permanecen como desconocidas; GymFit no inventa días del mes."),
+            listOf("Compatibilidad", "Este informe no se puede reimportar. Descarga la plantilla mensual para crear una rutina nueva.")
+        ) else listOf(listOf("Tema", "Cómo rellenar la plantilla"),
             listOf("Período", "Edita Mes y Año en Periodo antes de importar. Cada importación crea una rutina nueva."),
-            listOf("Semanas", "Duplica una hoja Semana 1 y cambia su nombre a Semana 2, Semana 3… según necesites."),
-            listOf("Días", "Usa Lunes, Martes, Miércoles, Jueves, Viernes, Sábado o Domingo."),
-            listOf("Ejercicios", "Rellena Día, Bloque y Ejercicio. Añade filas debajo de la cabecera sin cambiar las columnas."),
+            listOf("Calendario", "Cada fila representa un día real del mes indicado en Periodo."),
+            listOf("Días", "Usa números del 1 al último día del mes. Las fechas fuera del período se rechazan."),
+            listOf("Ejercicios", "En Rutina, cada fila se vincula mediante Día con una fecha del Calendario."),
             listOf("Series", "Ejemplo: 3. Repeticiones: 8–10. Trabajo por tiempo: 30 s o 5 min."),
             listOf("Descanso", "Ejemplos: 60 s, 2 min o - para no descansar."),
             listOf("Mañana", "Duración en minutos, por ejemplo 0,5 para 30 segundos. Indicaciones obligatorias."),
             listOf("Resultados", "Peso, Reps reales, RIR, Nota personal y Hecho son resultados; se ignoran al importar."),
             listOf("Historial", "Cada fila identifica una realización fechada. Nunca se importa como progreso."),
             listOf("Ejemplo", "La planificación incluida ilustra el formato; adapta sus ejercicios y cargas a tus necesidades."))
-        sheets["Inicio"] = listOf(listOf("Día", "Sesión", "Objetivo", "Notas")) +
-            plan.sessions.map { (day, info) -> listOf(day, info.title, info.focus, info.note) }
-        if (plan.morningSteps.isNotEmpty()) sheets["Mañana"] = listOf(listOf("Orden", "Ejercicio", "Duración (min)", "Indicaciones", "Vídeo")) +
-            plan.morningSteps.mapIndexed { index, step -> listOf(index + 1, step.title, step.seconds / 60.0, step.instruction, step.videoUrl) }
-        plan.weeks().forEach { week ->
-            sheets["Semana $week"] = listOf(listOf("Día", "Bloque", "Ejercicio", "Series", "Reps/tiempo", "Descanso",
+        if (exportPlan.morningSteps.isNotEmpty()) sheets["Mañana"] = listOf(listOf("Orden", "Ejercicio", "Duración (min)", "Indicaciones", "Vídeo")) +
+            exportPlan.morningSteps.mapIndexed { index, step -> listOf(index + 1, step.title, step.seconds / 60.0, step.instruction, step.videoUrl) }
+        if (!historicalOnly) {
+            sheets["Calendario"] = listOf(listOf("Día", "Fecha", "Día de la semana", "Tipo", "Sesión", "Objetivo",
+                "Notas", "Fase", "Intensidad", "Regla")) + (1..month.lengthOfMonth()).map { day ->
+                    val info = exportPlan.calendarDay(day)
+                    listOf(day, month.atDay(day).toString(), dayName(month.atDay(day).dayOfWeek.value), info.type,
+                        info.title, info.focus, info.note, info.phase, info.intensity, info.rule)
+                }
+            sheets["Rutina"] = listOf(listOf("Día", "Bloque", "Ejercicio", "Series", "Reps/tiempo", "Descanso",
                 "Peso (kg)", "Reps reales", "RIR", "Nota personal", "Indicaciones", "Vídeo", "Nota planificación", "Hecho")) +
-                plan.forWeek(week).map { item ->
+                exportPlan.dateDays().flatMap(exportPlan::forDate).map { item ->
                     val result = document?.progress?.get(item.key()) ?: ExerciseProgress()
-                    listOf(item.day, item.block, item.exercise, item.series, item.reps, item.rest,
+                    listOf(item.dayOfMonth ?: 0, item.block, item.exercise, item.series, item.reps, item.rest,
                         result.weight, result.actualReps, result.rir, result.userNote, item.instruction,
                         item.videoUrl, item.note, if (result.done) "Sí" else "")
+                }
+        } else {
+            sheets["Plan anterior"] = listOf(listOf("Semana", "Día", "Bloque", "Ejercicio", "Series", "Reps/tiempo",
+                "Descanso", "Peso (kg)", "Reps reales", "RIR", "Nota personal", "Indicaciones", "Vídeo", "Hecho")) +
+                exportPlan.exercises.map { item ->
+                    val result = document?.progress?.get(item.key()) ?: ExerciseProgress()
+                    listOf(item.week, item.day, item.block, item.exercise, item.series, item.reps, item.rest,
+                        result.weight, result.actualReps, result.rir, result.userNote, item.instruction,
+                        item.videoUrl, if (result.done) "Sí" else "")
                 }
         }
         sheets["Alternativas"] = listOf(listOf("Ejercicio principal", "Alternativa 1", "Alternativa 2", "Nota",
             "Indicaciones 1", "Vídeo 1", "Indicaciones 2", "Vídeo 2")) +
-            plan.exercises.filter { it.alternatives.isNotEmpty() }.distinctBy { it.exercise }.map { item ->
+            exportPlan.exercises.filter { it.alternatives.isNotEmpty() }.distinctBy { it.exercise }.map { item ->
                 val first = item.alternatives.first()
                 val second = item.alternatives.getOrNull(1)
                 listOf(item.exercise, first.title, second?.title.orEmpty(), "", first.instruction, first.videoUrl,
                     second?.instruction.orEmpty(), second?.videoUrl.orEmpty())
             }
         if (document != null) {
-            val history = mutableListOf<List<Any>>(listOf("Realización", "Inicio", "Fin", "Tipo", "Semana", "Día",
+            val history = mutableListOf<List<Any>>(listOf("Realización", "Inicio", "Fin", "Tipo", "Día del mes", "Semana", "Día",
                 "Ejercicio", "Peso (kg)", "Reps reales", "RIR", "Nota personal", "Hecho"))
             document.workouts.forEach { record ->
                 val prefix = listOf(record.id, record.startedAt.ifBlank { "Fecha desconocida" }, record.finishedAt,
-                    record.kind, record.week, record.day)
+                    record.kind, record.dayOfMonth ?: "", record.week, record.day)
                 if (record.results.isEmpty()) history += prefix + listOf("Rutina matinal", "", "", "", "", if (record.finishedAt.isNotBlank()) "Sí" else "No")
                 record.results.forEach { (key, result) ->
-                    val title = plan.exercises.firstOrNull { it.key() == key }?.exercise ?: key
+                    val title = exportPlan.exercises.firstOrNull { it.key() == key }?.exercise ?: key
                     history += prefix + listOf(title, result.weight, result.actualReps, result.rir,
                         result.userNote, if (result.done) "Sí" else "No")
                 }
@@ -107,6 +128,11 @@ object RoutineWorkbook {
         while (number > 0) { result = ('A' + (number - 1) % 26) + result; number = (number - 1) / 26 }
         return result
     }
+
+    /** Nombre español estable para el valor ISO de día de la semana. */
+    private fun dayName(dayOfWeek: Int): String = listOf(
+        "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"
+    )[dayOfWeek - 1]
 
     /** Espacio de nombres SpreadsheetML compartido por los componentes del libro. */
     private const val NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"

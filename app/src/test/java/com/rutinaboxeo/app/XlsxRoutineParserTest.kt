@@ -30,19 +30,22 @@ class XlsxRoutineParserTest {
         XlsxRoutineParser.parse(archive("oversized.xml", ByteArray(5 * 1024 * 1024 + 1)).inputStream())
     }
 
-    /** Verifica semanas, sesiones, recuperación, alternativas y rutina matinal. */
+    /** Verifica el calendario completo, la recuperación activa, alternativas y rutina matinal. */
     @Test fun bundledTemplateHasExpectedStructure() {
         val plan = File("src/main/assets/rutina_plantilla.xlsx").inputStream().use(XlsxRoutineParser::parse)
-        assertEquals(listOf(1, 2, 3, 4), plan.weeks())
-        assertEquals("Piernas + potencia", plan.session("Lunes").title)
-        assertTrue(plan.forDay(1, "Lunes").isNotEmpty())
-        assertTrue(plan.forDay(1, "Viernes").any { it.block == "Recuperación" })
+        assertEquals(java.time.YearMonth.of(2026, 9), plan.month)
+        assertEquals((1..30).toList(), plan.dateDays())
+        assertEquals(30, plan.calendar.size)
+        assertTrue(plan.dateDays().all { plan.forDate(it).isNotEmpty() })
+        assertTrue(plan.calendar.values.none { it.type.equals("Descanso", true) })
+        assertEquals("Recuperación", plan.calendarDay(6).type)
+        assertTrue(plan.forDate(6).any { it.exercise.contains("Movilidad") })
         assertTrue(plan.exercises.any { it.alternatives.isNotEmpty() })
         assertTrue(plan.exercises.flatMap { it.alternatives }.all { it.title.isNotBlank() })
         assertEquals(6, plan.morningSteps.size)
         assertEquals("Estiramiento suave", plan.morningSteps.last().title)
         val videoExamples = plan.exercises.filter { it.exercise == "Sentadillas sin peso" }
-        assertEquals(listOf(1, 2, 3, 4), videoExamples.map { it.week }.distinct())
+        assertTrue(videoExamples.mapNotNull { it.dayOfMonth }.containsAll(listOf(3, 10, 17, 24)))
         assertTrue(videoExamples.all { VideoLinks.youtubeId(it.videoUrl) == "50KX3DZxw60" })
     }
 

@@ -12,6 +12,9 @@ internal object RoutineJson {
         .put("sessions", JSONObject().apply {
             plan.sessions.forEach { (day, info) -> put(day, info.toJson()) }
         })
+        .put("calendar", JSONObject().apply {
+            plan.calendar.forEach { (day, info) -> put(day.toString(), info.toJson()) }
+        })
         .put("morning", JSONArray().apply { plan.morningSteps.forEach { put(it.toJson()) } })
         .toString()
 
@@ -26,7 +29,13 @@ internal object RoutineJson {
             }
         }
         val morning = root?.optJSONArray("morning")?.objects()?.map(::morningFromJson)?.toList().orEmpty()
-        RoutinePlan(exercises, sessions, morning, root?.optString("month")?.takeIf { it.isNotBlank() }?.let(java.time.YearMonth::parse))
+        val calendar = buildMap {
+            root?.optJSONObject("calendar")?.let { saved ->
+                saved.keys().forEach { day -> saved.optJSONObject(day)?.let { put(day.toInt(), calendarDayFromJson(it)) } }
+            }
+        }
+        RoutinePlan(exercises, sessions, morning,
+            root?.optString("month")?.takeIf { it.isNotBlank() }?.let(java.time.YearMonth::parse), calendar)
     }.getOrNull()
 
     /** Serializa el progreso indexado por la clave estable de cada ejercicio. */
@@ -45,6 +54,7 @@ internal object RoutineJson {
         .put("week", week).put("day", day).put("block", block).put("exercise", exercise)
         .put("series", series).put("reps", reps).put("rest", rest).put("note", note).put("order", order)
         .put("instruction", instruction).put("videoUrl", videoUrl)
+        .put("dayOfMonth", dayOfMonth ?: JSONObject.NULL)
         .put("alternatives", JSONArray().apply { alternatives.forEach { put(it.toJson()) } })
 
     /** Convierte una alternativa en un objeto JSON. */
@@ -54,6 +64,11 @@ internal object RoutineJson {
     /** Convierte los metadatos de una sesión en un objeto JSON. */
     private fun SessionInfo.toJson(): JSONObject = JSONObject()
         .put("title", title).put("focus", focus).put("note", note)
+
+    /** Convierte la planificación de una fecha mensual a JSON. */
+    private fun CalendarDay.toJson(): JSONObject = JSONObject()
+        .put("dayOfMonth", dayOfMonth).put("type", type).put("title", title).put("focus", focus)
+        .put("note", note).put("phase", phase).put("intensity", intensity).put("rule", rule)
 
     /** Convierte un paso matinal en un objeto JSON. */
     private fun MorningStep.toJson(): JSONObject = JSONObject()
@@ -77,7 +92,8 @@ internal object RoutineJson {
         order = value.optInt("order"),
         instruction = value.optString("instruction"),
         videoUrl = value.optString("videoUrl"),
-        alternatives = value.optJSONArray("alternatives")?.objects()?.map(::alternativeFromJson)?.toList().orEmpty()
+        alternatives = value.optJSONArray("alternatives")?.objects()?.map(::alternativeFromJson)?.toList().orEmpty(),
+        dayOfMonth = value.optInt("dayOfMonth").takeIf { it > 0 }
     )
 
     /** Reconstruye una alternativa desde JSON. */
@@ -92,6 +108,13 @@ internal object RoutineJson {
         title = value.optString("title"),
         focus = value.optString("focus"),
         note = value.optString("note")
+    )
+
+    /** Reconstruye los metadatos de una fecha mensual. */
+    private fun calendarDayFromJson(value: JSONObject): CalendarDay = CalendarDay(
+        dayOfMonth = value.getInt("dayOfMonth"), type = value.optString("type"),
+        title = value.optString("title"), focus = value.optString("focus"), note = value.optString("note"),
+        phase = value.optString("phase"), intensity = value.optString("intensity"), rule = value.optString("rule")
     )
 
     /** Reconstruye un paso matinal desde JSON. */

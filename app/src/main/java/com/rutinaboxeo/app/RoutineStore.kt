@@ -55,14 +55,6 @@ object RoutineStore {
         preferences(context).edit().putString(PROGRESS, RoutineJson.encodeProgress(map)).apply()
     }
 
-    /** Devuelve la última semana elegida o la primera si todavía no se guardó. */
-    fun activeWeek(context: Context): Int = preferences(context).getInt(ACTIVE_WEEK, FIRST_WEEK)
-
-    /** Persiste la semana seleccionada para restaurarla en el siguiente inicio. */
-    fun saveActiveWeek(context: Context, week: Int) {
-        preferences(context).edit().putInt(ACTIVE_WEEK, week).apply()
-    }
-
     /** Elimina únicamente registros del usuario y conserva la rutina importada. */
     fun clearProgress(context: Context) {
         if (monthly(context).active() != null) {
@@ -85,15 +77,10 @@ object RoutineStore {
     /** Clave del JSON con registros y ejercicios completados. */
     private const val PROGRESS = "progress_json"
 
-    /** Clave de la última semana seleccionada. */
-    private const val ACTIVE_WEEK = "active_week"
-
     /** Clave que distingue una importación de la antigua plantilla incluida. */
     private const val IMPORTED = "routine_imported"
 
     /** Objeto JSON vacío utilizado como valor seguro por defecto. */
     private const val EMPTY_JSON = "{}"
 
-    /** Primera semana seleccionada antes de importar preferencias. */
-    private const val FIRST_WEEK = 1
 }

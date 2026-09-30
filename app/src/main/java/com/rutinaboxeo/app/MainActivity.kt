@@ -57,8 +57,8 @@ class MainActivity : GymFitActivity() {
     private val autosaveHandler = Handler(Looper.getMainLooper())
     /** Guarda los campos editados tras una pausa breve de escritura. */
     private val autosave = Runnable { saveSessionFields() }
-    /** Semana elegida en las vistas de rutina y hoy. */
-    private var selectedWeek = 1
+    /** Día seleccionado en los planes organizados por fechas mensuales. */
+    private var selectedDateDay = 1
     /** Página que controla el contenido y el estado de la navegación. */
     private var page = Page.TODAY
     /** Indica si la pestaña Plantilla muestra exportación. */
@@ -79,10 +79,8 @@ class MainActivity : GymFitActivity() {
     private var morningTotal: TextView? = null
     /** Botón que inicia o pausa el contador matinal. */
     private var morningPlay: MaterialButton? = null
-    /** Semana de la sesión de tarde abierta. */
-    private var sessionWeek = 1
-    /** Día de la sesión de tarde abierta. */
-    private var sessionDay = ""
+    /** Fecha mensual de la sesión abierta; vacía para planes antiguos por semanas. */
+    private var sessionDateDay: Int? = null
     /** Índice del ejercicio visible en la sesión. */
     private var sessionIndex = 0
     /** Estados de ejecución conservados para cada ejercicio. */
@@ -127,12 +125,11 @@ class MainActivity : GymFitActivity() {
         if (uri != null) try {
             val parsed = contentResolver.openInputStream(uri)?.use { XlsxRoutineParser.parse(it) }
                 ?: error("No se pudo abrir el archivo")
-            chooseMonth("Mes de la nueva rutina", parsed.month ?: YearMonth.now()) { period ->
-                saveSessionFields()
-                monthly.create(parsed.copy(month = period), period)
-                RoutineStore.setImported(this, true)
-                activateImportedPlan()
-            }
+            val period = requireNotNull(parsed.month) { "La plantilla no contiene un período mensual" }
+            saveSessionFields()
+            monthly.create(parsed, period)
+            RoutineStore.setImported(this, true)
+            activateImportedPlan()
         } catch (e: Exception) {
             Toast.makeText(this, "No se pudo importar: ${e.message}", Toast.LENGTH_LONG).show()
         }
@@ -172,10 +169,11 @@ class MainActivity : GymFitActivity() {
         if (importStatus == null) RoutineStore.setImported(this, imported)
         plan = if (imported) stored ?: RoutinePlan(emptyList()) else RoutinePlan(emptyList())
         morningRemaining = plan.morningSteps.firstOrNull()?.seconds ?: 0
-        selectedWeek = RoutineStore.activeWeek(this).takeIf { it in plan.weeks() }
-            ?: plan.weeks().firstOrNull() ?: 1
+        selectedDateDay = RoutinePresentation.initialDay(plan)
         if (savedInstanceState != null) {
             templateExport = savedInstanceState.getBoolean("templateExport")
+            selectedDateDay = savedInstanceState.getInt("selectedDateDay", selectedDateDay)
+                .coerceIn(1, plan.month?.lengthOfMonth() ?: 1)
             if (plan.morningSteps.isNotEmpty()) {
                 morningIndex = savedInstanceState.getInt("morningIndex", 0)
                     .coerceIn(plan.morningSteps.indices)
@@ -183,8 +181,7 @@ class MainActivity : GymFitActivity() {
                     .coerceIn(1, plan.morningSteps[morningIndex].seconds)
                 morningStarted = savedInstanceState.getBoolean("morningStarted", false)
             }
-            sessionWeek = savedInstanceState.getInt("sessionWeek", selectedWeek)
-            sessionDay = savedInstanceState.getString("sessionDay").orEmpty()
+            sessionDateDay = savedInstanceState.getInt("sessionDateDay", 0).takeIf { it > 0 }
             sessionIndex = savedInstanceState.getInt("sessionIndex", 0)
             savedInstanceState.getBundle("exerciseRuns")?.let { runs ->
                 for (key in runs.keySet()) {
@@ -200,8 +197,10 @@ class MainActivity : GymFitActivity() {
         }
         when (savedInstanceState?.getString("page")) {
             Page.MORNING.name -> showPage(if (plan.morningSteps.isEmpty()) Page.TODAY else Page.MORNING)
-            Page.SESSION.name -> if (sessionDay.isNotBlank() && plan.forDay(sessionWeek, sessionDay).isNotEmpty())
-                session(sessionWeek, sessionDay) else showPage(Page.TODAY)
+            Page.SESSION.name -> when {
+                sessionDateDay != null && plan.forDate(sessionDateDay!!).isNotEmpty() -> session(sessionDateDay!!)
+                else -> showPage(Page.TODAY)
+            }
             Page.ROUTINE.name -> showPage(Page.ROUTINE)
             Page.PROGRESS.name -> showPage(Page.PROGRESS)
             Page.TEMPLATE.name -> showPage(Page.TEMPLATE)
@@ -220,11 +219,11 @@ class MainActivity : GymFitActivity() {
         saveSessionFields()
         outState.putString("page", page.name)
         outState.putBoolean("templateExport", templateExport)
+        outState.putInt("selectedDateDay", selectedDateDay)
         outState.putInt("morningIndex", morningIndex)
         outState.putInt("morningRemaining", morningRemaining)
         outState.putBoolean("morningStarted", morningStarted)
-        outState.putInt("sessionWeek", sessionWeek)
-        outState.putString("sessionDay", sessionDay)
+        outState.putInt("sessionDateDay", sessionDateDay ?: 0)
         outState.putInt("sessionIndex", sessionIndex)
         outState.putBundle("exerciseRuns", Bundle().apply {
             exerciseRuns.forEach { (key, run) ->
@@ -385,9 +384,25 @@ class MainActivity : GymFitActivity() {
             add(body, card(empty))
             return
         }
+        if (!plan.isMonthlyCalendar()) {
+            showLegacyArchive(body)
+            return
+        }
+        val monthlyDay = plan.month?.takeIf { it == YearMonth.now() }
+            ?.let { LocalDate.now().dayOfMonth }
+        if (monthlyDay == null) {
+            val period = plan.month
+            val panel = col(18)
+            add(panel, text("Esta rutina no corresponde al mes actual", 20f, bold = true))
+            add(panel, text("Abre Rutina para consultar ${period?.month?.getDisplayName(java.time.format.TextStyle.FULL, locale)} ${period?.year} o importa el mes actual.", 14f, muted), 9)
+            add(panel, button("Abrir calendario").apply { setOnClickListener { showPage(Page.ROUTINE) } }, 15)
+            add(body, card(panel))
+            return
+        }
         val day = todayName()
-        val info = plan.session(day)
-        val items = plan.forDay(selectedWeek, day)
+        val info = plan.calendarDay(monthlyDay).let { SessionInfo(it.title, it.focus, it.note) }
+        val items = plan.forDate(monthlyDay)
+        val isRestDay = plan.calendarDay(monthlyDay).type.equals("Descanso", true)
         val hero = FrameLayout(this).apply { background = box(getColor(R.color.navy), 18); clipToOutline = true }
         hero.addView(ImageView(this).apply {
             setImageResource(R.drawable.boxing_hero); scaleType = ImageView.ScaleType.CENTER_CROP
@@ -399,11 +414,14 @@ class MainActivity : GymFitActivity() {
         val overlay = col().apply { setPadding(dp(19), dp(18), dp(19), dp(17)) }
         add(overlay, text("ENTRENAMIENTO DE TARDE", 12f, Color.WHITE, true))
         add(overlay, text(info.title, 26f, Color.WHITE, true), 10)
-        add(overlay, text("$day · Semana $selectedWeek", 15f, Color.WHITE))
+        add(overlay, text("$day · $monthlyDay de ${plan.month?.month?.getDisplayName(java.time.format.TextStyle.FULL, locale)}", 15f, Color.WHITE))
         overlay.addView(View(this), LinearLayout.LayoutParams(1, 0, 1f))
         add(overlay, text("✦  ${items.size} ejercicios", 14f, Color.WHITE), bottom = 6)
         if (info.focus.isNotBlank()) add(overlay, text("◎  ${info.focus}", 13f, Color.WHITE), bottom = 14)
-        add(overlay, button("▶  Empezar entrenamiento").apply { setOnClickListener { session(selectedWeek, day) } })
+        if (isRestDay) add(overlay, text("Día de descanso programado", 15f, Color.WHITE, true))
+        else add(overlay, button("▶  Empezar entrenamiento").apply {
+            setOnClickListener { session(monthlyDay) }
+        })
         hero.addView(overlay, FrameLayout.LayoutParams(-1, -1))
         body.addView(hero, LinearLayout.LayoutParams(-1, dp(322)))
         val tip = row().apply { setPadding(dp(14), dp(14), dp(14), dp(14)) }
@@ -551,43 +569,91 @@ class MainActivity : GymFitActivity() {
     /** Dibuja las semanas y sesiones disponibles con su progreso. */
     private fun routine() {
         val body = scrollPage()
-        header(body, "Rutina", "Selecciona una semana y un día")
+        header(body, "Rutina", "Selecciona un día del mes")
         monthly.active()?.let { add(body, text(it.label(), 14f, muted), bottom = 12) }
         add(body, button("Mis rutinas", false).apply { setOnClickListener { showMonthlyRoutines() } }, bottom = 14)
         if (plan.exercises.isEmpty()) {
             showRoutineEmpty(body)
             return
         }
-        val weeks = row()
-        plan.weeks().forEach { week ->
-            weeks.addView(button("Semana $week", week == selectedWeek).apply {
-                textSize = 12f; minHeight = dp(40)
-                setOnClickListener {
-                    selectedWeek = week; RoutineStore.saveActiveWeek(this@MainActivity, week); routine()
+        if (!plan.isMonthlyCalendar()) {
+            showLegacyArchive(body)
+            return
+        }
+        routineCalendar(body)
+    }
+
+    /** Explica que un plan semanal heredado solo permanece disponible como histórico exportable. */
+    private fun showLegacyArchive(body: LinearLayout) {
+        val panel = col(18)
+        add(panel, text("Rutina de una versión anterior", 20f, bold = true))
+        add(panel, text("Sus resultados se conservan para consulta y exportación, pero el formato semanal ya no inicia entrenamientos. Importa la nueva plantilla mensual para continuar.", 14f, muted), 9)
+        add(panel, button("Exportar histórico").apply { setOnClickListener { showMonthlyRoutines(exportOnly = true) } }, 15)
+        add(panel, button("Ir a Plantilla", false).apply { setOnClickListener { showPage(Page.TEMPLATE) } }, 9)
+        add(body, card(panel, pale, pale))
+    }
+
+    /** Dibuja el mes real y el resumen de la fecha seleccionada. */
+    private fun routineCalendar(body: LinearLayout) {
+        val period = plan.month ?: return
+        val locale = Locale("es", "ES")
+        selectedDateDay = selectedDateDay.coerceIn(1, period.lengthOfMonth())
+        add(body, text(RoutinePresentation.monthTitle(period), 21f, bold = true), bottom = 12)
+
+        val weekHeader = row()
+        listOf("L", "M", "X", "J", "V", "S", "D").forEach { label ->
+            weekHeader.addView(text(label, 12f, muted, true).apply { gravity = Gravity.CENTER },
+                LinearLayout.LayoutParams(0, dp(28), 1f))
+        }
+        add(body, weekHeader, bottom = 4)
+
+        RoutinePresentation.calendarRows(period).forEach { week ->
+            val calendarRow = row()
+            week.forEach { day ->
+                if (day == null) {
+                    calendarRow.addView(View(this), LinearLayout.LayoutParams(0, dp(48), 1f))
+                } else {
+                    val items = plan.forDate(day)
+                    val completed = items.isNotEmpty() && items.all { progress[it.key()]?.done == true }
+                    val selected = day == selectedDateDay
+                    val dayButton = button(day.toString(), selected).apply {
+                        textSize = 13f
+                        minHeight = dp(44)
+                        if (completed && !selected) {
+                            backgroundTintList = ColorStateList.valueOf(getColor(R.color.completed_surface))
+                            setTextColor(green)
+                        }
+                        setOnClickListener { selectedDateDay = day; routine() }
+                    }
+                    calendarRow.addView(dayButton, LinearLayout.LayoutParams(0, dp(48), 1f).apply {
+                        marginEnd = dp(3); bottomMargin = dp(3)
+                    })
                 }
-            }, LinearLayout.LayoutParams(0, dp(40), 1f).apply { marginEnd = dp(5) })
+            }
+            add(body, calendarRow)
         }
-        add(body, weeks, bottom = 13)
-        plan.days(selectedWeek).forEach { day ->
-            val info = plan.session(day)
-            val items = plan.forDay(selectedWeek, day)
-            val done = items.count { progress[it.key()]?.done == true }
-            val panel = row().apply { setPadding(dp(13), dp(13), dp(13), dp(13)) }
-            panel.addView(text(if (day == "Domingo") "◷" else "✦", 20f, red, true).apply {
-                gravity = Gravity.CENTER; background = box(getColor(R.color.badge_surface), 25)
-            }, LinearLayout.LayoutParams(dp(43), dp(43)))
-            val details = col().apply { setPadding(dp(11), 0, 0, 0) }
-            add(details, text(day, 16f, bold = true))
-            add(details, text(info.title, 14f), 3)
-            add(details, text("${items.size} ejercicios · $done completados", 12f, muted), 3)
-            panel.addView(details, LinearLayout.LayoutParams(0, -2, 1f))
-            val complete = items.isNotEmpty() && done == items.size
-            panel.addView(text(if (complete) "✓" else "›", 22f, if (complete) green else red, true))
-            add(body, card(panel, if (day == todayName()) getColor(R.color.selected_surface) else cardSurface,
-                if (day == todayName()) red else line).apply {
-                setOnClickListener { session(selectedWeek, day) }
-            }, bottom = 9)
+
+        val day = selectedDateDay
+        val date = period.atDay(day)
+        val info = plan.calendarDay(day)
+        val items = plan.forDate(day)
+        val done = items.count { progress[it.key()]?.done == true }
+        val details = col(18)
+        val dateLabel = RoutinePresentation.fullDate(date)
+        add(details, text(dateLabel, 20f, bold = true))
+        add(details, text(info.type.uppercase(locale), 12f, if (info.type.equals("Descanso", true)) muted else red, true), 7)
+        add(details, text(info.title, 18f, bold = true), 8)
+        if (info.focus.isNotBlank()) add(details, text(info.focus, 14f, muted), 5)
+        if (info.phase.isNotBlank()) add(details, text("${info.phase}${info.intensity.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty()}", 13f, muted), 5)
+        add(details, text("${items.size} ejercicios · $done completados", 13f, muted), 8)
+        if (info.note.isNotBlank()) add(details, text(info.note, 13f, muted), 5)
+        if (items.isNotEmpty() && !info.type.equals("Descanso", true)) {
+            add(details, button("▶  Empezar entrenamiento").apply { setOnClickListener { session(day) } }, 15)
+        } else {
+            add(details, text("No hay entrenamiento que iniciar en esta fecha.", 13f, muted), 12)
         }
+        add(body, card(details, if (date == LocalDate.now()) getColor(R.color.selected_surface) else cardSurface,
+            if (date == LocalDate.now()) red else line), top = 13)
     }
 
     /** Muestra el estado vacío común cuando todavía no existe una rutina. */
@@ -621,18 +687,19 @@ class MainActivity : GymFitActivity() {
         }, 12)
     }
 
-    /** Abre una sesión y selecciona el primer ejercicio pendiente. */
-    private fun session(week: Int, day: String) {
+    /** Abre una sesión ligada a un día real del mes. */
+    private fun session(dayOfMonth: Int) {
         saveSessionFields()
-        val previous = monthly.active()?.workouts?.lastOrNull { it.week == week && it.day == day && it.kind == "tarde" }
+        val previous = monthly.active()?.workouts?.lastOrNull {
+            it.dayOfMonth == dayOfMonth && it.kind == "tarde"
+        }
         sessionReadOnly = previous != null && previous.finishedAt.isNotBlank()
-        if (!sessionReadOnly) monthly.begin(week, day)
-        if (sessionWeek != week || sessionDay != day) {
+        if (!sessionReadOnly) monthly.beginDate(dayOfMonth)
+        if (sessionDateDay != dayOfMonth) {
             saveSessionFields()
             pauseSessionRest()
-            sessionWeek = week
-            sessionDay = day
-            val items = plan.forDay(week, day)
+            sessionDateDay = dayOfMonth
+            val items = plan.forDate(dayOfMonth)
             sessionIndex = items.indexOfFirst { progress[it.key()]?.done != true }.takeIf { it >= 0 } ?: 0
         }
         page = Page.SESSION
@@ -640,17 +707,21 @@ class MainActivity : GymFitActivity() {
         renderSession()
     }
 
+    /** Devuelve los ejercicios de la fecha mensual abierta. */
+    private fun currentSessionItems(): List<RoutineExercise> = sessionDateDay?.let(plan::forDate).orEmpty()
+
     /** Dibuja el ejercicio actual, su registro y el estado del resto de la sesión. */
     private fun renderSession() {
         saveSessionFields()
-        val week = sessionWeek
-        val day = sessionDay
-        val items = plan.forDay(week, day)
+        val items = currentSessionItems()
         sessionIndex = sessionIndex.coerceIn(0, (items.size - 1).coerceAtLeast(0))
         val body = scrollPage()
         sessionFields = emptyList()
         sessionFieldKey = null
-        header(body, plan.session(day).title, "Semana $week · $day", backTo = Page.ROUTINE)
+        val monthlyInfo = sessionDateDay?.let(plan::calendarDay)
+        val title = monthlyInfo?.title ?: "Entrenamiento"
+        val subtitle = sessionDateDay?.let { selected -> plan.month?.atDay(selected)?.let(RoutinePresentation::fullDate) }.orEmpty()
+        header(body, title, subtitle, backTo = Page.ROUTINE)
         if (items.isEmpty()) {
             add(body, text("No hay ejercicios para esta sesión.", 15f, muted))
             return
@@ -660,7 +731,7 @@ class MainActivity : GymFitActivity() {
         val completed = items.count { progress[it.key()]?.done == true }
         val summary = col(14)
         add(summary, text("$completed de ${items.size} ejercicios hechos", 15f, bold = true))
-        val focus = plan.session(day).focus
+        val focus = monthlyInfo?.focus.orEmpty()
         if (focus.isNotBlank()) add(summary, text(focus, 13f, muted), 5)
         add(body, card(summary, pale, pale), bottom = 13)
         if (sessionReadOnly) {
@@ -668,7 +739,7 @@ class MainActivity : GymFitActivity() {
             add(body, button("Repetir entrenamiento").apply { setOnClickListener {
                 sessionFields = emptyList()
                 sessionFieldKey = null
-                monthly.begin(week, day, repeat = true)
+                sessionDateDay?.let { monthly.beginDate(it, repeat = true) }
                 progress.clear()
                 progress.putAll(RoutineStore.loadProgress(this@MainActivity))
                 exerciseRuns.clear()
@@ -936,7 +1007,7 @@ class MainActivity : GymFitActivity() {
         sessionTimer?.cancel()
         sessionTimer = null
         sessionRunning = false
-        if (page == Page.SESSION) plan.forDay(sessionWeek, sessionDay).getOrNull(sessionIndex)?.let {
+        if (page == Page.SESSION) currentSessionItems().getOrNull(sessionIndex)?.let {
             updateSessionControls(it)
         }
     }
@@ -946,7 +1017,7 @@ class MainActivity : GymFitActivity() {
         pauseSessionRest()
         val pending = items.count { progress[it.key()]?.done != true }
         if (pending == 0 || items.isEmpty()) {
-            monthly.finish(sessionWeek, sessionDay)
+            finishCurrentSession()
             showPage(Page.PROGRESS)
             return
         }
@@ -954,34 +1025,34 @@ class MainActivity : GymFitActivity() {
             .setMessage("Quedan $pending ejercicios sin marcar. ¿Quieres marcarlos como completados?")
             .setNegativeButton("Seguir entrenando", null)
             .setNeutralButton("Finalizar sin marcarlos") { _, _ ->
-                monthly.finish(sessionWeek, sessionDay)
+                finishCurrentSession()
                 showPage(Page.PROGRESS)
             }
             .setPositiveButton("Marcar y finalizar") { _, _ ->
                 items.forEach { progress.getOrPut(it.key()) { ExerciseProgress() }.done = true }
                 RoutineStore.saveProgress(this, progress)
-                monthly.finish(sessionWeek, sessionDay)
+                finishCurrentSession()
                 showPage(Page.PROGRESS)
             }.show()
     }
 
-    /** Dibuja estadísticas agregadas, avance semanal e historial de sesiones. */
+    /** Cierra la sesión visible conservando su identidad mensual o heredada. */
+    private fun finishCurrentSession() {
+        sessionDateDay?.let(monthly::finishDate)
+    }
+
+    /** Dibuja estadísticas agregadas, avance e historial con un modelo ya calculado. */
     private fun progressPage() {
         val body = scrollPage()
-        header(body, "Progreso", "Tu evolución semana a semana")
+        header(body, "Progreso", if (plan.isMonthlyCalendar()) "Tu evolución durante el mes" else "Tu evolución semana a semana")
         if (plan.exercises.isEmpty()) {
             showRoutineEmpty(body)
             return
         }
-        val count = plan.exercises.count { progress[it.key()]?.done == true }
-        val days = plan.weeks().flatMap { week -> plan.days(week).map { week to it } }
-        val completedDays = days.count { (week, day) ->
-            val items = plan.forDay(week, day)
-            items.isNotEmpty() && items.all { progress[it.key()]?.done == true }
-        }
+        val summary = RoutinePresentation.progress(plan, progress)
         val stats = row()
-        listOf(completedDays.toString() to "Sesiones", count.toString() to "Ejercicios",
-            "${if (plan.exercises.isEmpty()) 0 else count * 100 / plan.exercises.size}%" to "Avance")
+        listOf(summary.completedSessions.toString() to "Sesiones", summary.completedExercises.toString() to "Ejercicios",
+            "${summary.percent}%" to "Avance")
             .forEachIndexed { index, (number, caption) ->
                 val box = col(9).apply { gravity = Gravity.CENTER }
                 add(box, text(number, 24f, bold = true).apply { gravity = Gravity.CENTER })
@@ -992,33 +1063,29 @@ class MainActivity : GymFitActivity() {
             }
         add(body, stats, bottom = 14)
         val chart = col(15)
-        add(chart, text("Ejercicios completados por semana", 17f, bold = true), bottom = 12)
-        plan.weeks().forEach { week ->
-            val items = plan.forWeek(week)
-            val done = items.count { progress[it.key()]?.done == true }
+        add(chart, text(if (plan.isMonthlyCalendar()) "Ejercicios completados por tramo del mes"
+            else "Ejercicios completados por semana", 17f, bold = true), bottom = 12)
+        summary.groups.forEach { group ->
             val entry = row()
-            entry.addView(text("S$week", 13f, muted, true), LinearLayout.LayoutParams(dp(30), -2))
+            entry.addView(text(group.label, 13f, muted, true), LinearLayout.LayoutParams(dp(45), -2))
             val track = FrameLayout(this).apply { background = box(pale, 5) }
             val bar = View(this).apply { background = box(red, 5) }
             track.addView(bar, FrameLayout.LayoutParams(0, dp(13)))
-            track.post { bar.layoutParams = FrameLayout.LayoutParams(track.width * done / items.size.coerceAtLeast(1), dp(13)) }
+            track.post { bar.layoutParams = FrameLayout.LayoutParams(track.width * group.completed / group.total.coerceAtLeast(1), dp(13)) }
             entry.addView(track, LinearLayout.LayoutParams(0, dp(13), 1f))
-            entry.addView(text("$done/${items.size}", 12f, muted).apply { gravity = Gravity.END },
+            entry.addView(text("${group.completed}/${group.total}", 12f, muted).apply { gravity = Gravity.END },
                 LinearLayout.LayoutParams(dp(57), -2))
             add(chart, entry, bottom = 11)
         }
         add(body, card(chart), bottom = 14)
         val history = col(15)
         add(history, text("Historial de entrenamientos", 17f, bold = true), bottom = 11)
-        val started = days.filter { (week, day) -> plan.forDay(week, day).any { progress[it.key()]?.done == true } }
-        if (started.isEmpty()) add(history, text("Aún no hay entrenamientos registrados.", 13f, muted))
-        started.takeLast(12).asReversed().forEach { (week, day) ->
-            val items = plan.forDay(week, day)
-            val done = items.count { progress[it.key()]?.done == true }
+        if (summary.history.isEmpty()) add(history, text("Aún no hay entrenamientos registrados.", 13f, muted))
+        summary.history.forEach { item ->
             val entry = row()
-            entry.addView(text("$day · S$week", 13f), LinearLayout.LayoutParams(0, -2, 1f))
-            entry.addView(text("$done/${items.size}  ${if (done == items.size) "✓" else "◌"}",
-                13f, if (done == items.size) green else muted))
+            entry.addView(text(item.label, 13f), LinearLayout.LayoutParams(0, -2, 1f))
+            entry.addView(text("${item.completed}/${item.total}  ${if (item.isComplete) "✓" else "◌"}",
+                13f, if (item.isComplete) green else muted))
             add(history, entry, bottom = 11)
         }
         add(body, card(history))
@@ -1055,9 +1122,9 @@ class MainActivity : GymFitActivity() {
         add(body, card(panel, cardSurface, getColor(R.color.strong_border)), bottom = 14)
         val format = col(15)
         add(format, text("Formato esperado", 17f, bold = true), bottom = 10)
-        listOf("✓  Archivo .xlsx", "✓  Hojas Mañana, Inicio y Semana 1–4",
-            "✓  Columnas Día, Bloque, Ejercicio, Series, Reps y Descanso",
-            "✓  Hojas Alternativas y Recuperación").forEach { add(format, text(it, 13f, muted), bottom = 8) }
+        listOf("✓  Archivo .xlsx mensual", "✓  Hojas Periodo, Calendario y Rutina",
+            "✓  Un día entero entre 1 y el último día del mes",
+            "✓  Al menos un ejercicio por fecha; recuperación incluida").forEach { add(format, text(it, 13f, muted), bottom = 8) }
         add(body, card(format, pale, pale), bottom = 12)
         add(body, button("Descargar plantilla de ejemplo", false).apply {
             setOnClickListener { templateExport = true; templatePage() }
@@ -1085,17 +1152,22 @@ class MainActivity : GymFitActivity() {
         }, bottom = 14)
         val includes = col(15)
         add(includes, text("Incluye", 17f, bold = true), bottom = 10)
-        listOf("✓  Mañana editable con duración e indicaciones", "✓  Cuatro semanas de entrenamiento",
+        listOf("✓  Mes elegido con 28, 29, 30 o 31 fechas", "✓  Rutina asociada a cada día",
             "✓  Ejercicios, series, repeticiones y descansos",
-            "✓  Alternativas y recuperación").forEach { add(includes, text(it, 13f, muted), bottom = 8) }
+            "✓  Movilidad, estiramientos y alternativas").forEach { add(includes, text(it, 13f, muted), bottom = 8) }
         add(body, card(includes, pale, pale))
     }
-    /** Copia la plantilla a caché y abre el panel nativo para compartirla. */
-    private fun shareTemplate() = try {
+    /** Solicita el mes exacto antes de preparar una plantilla para compartir. */
+    private fun shareTemplate() = chooseMonth("Mes de la plantilla", YearMonth.now(), confirmText = "Compartir") { period ->
+        shareTemplate(period)
+    }
+
+    /** Copia la plantilla del período elegido a caché y abre el panel nativo para compartirla. */
+    private fun shareTemplate(period: YearMonth) = try {
         val folder = File(cacheDir, "shared").apply { mkdirs() }
-        val period = YearMonth.now()
         val file = File(folder, "%02d_%04d.xlsx".format(Locale.ROOT, period.monthValue, period.year))
-        file.outputStream().use { RoutineWorkbook.write(it, embeddedPlan(), period) }
+        val template = MonthlyPlanTemplate.forMonth(embeddedPlan(), period)
+        file.outputStream().use { RoutineWorkbook.write(it, template, period) }
         val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
         startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
             type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -1106,7 +1178,8 @@ class MainActivity : GymFitActivity() {
         Toast.makeText(this, "No se pudo compartir: ${e.message}", Toast.LENGTH_LONG).show()
     }
     /** Solicita el período del documento sin deducir fechas de entrenamientos antiguos. */
-    private fun chooseMonth(title: String, initial: YearMonth, migration: Boolean = false, action: (YearMonth) -> Unit) {
+    private fun chooseMonth(title: String, initial: YearMonth, migration: Boolean = false,
+        confirmText: String = "Guardar rutina", action: (YearMonth) -> Unit) {
         val panel = col(16)
         add(panel, text(if (migration) "Conservaremos tus resultados; las fechas antiguas seguirán como desconocidas."
             else "La rutina actual pasará al histórico. La nueva empezará con progreso a cero.", 14f), bottom = 12)
@@ -1118,7 +1191,7 @@ class MainActivity : GymFitActivity() {
         add(panel, text("Mes                         Año", 14f))
         add(panel, selectors)
         val dialog = AlertDialog.Builder(this).setTitle(title).setView(panel)
-            .setCancelable(!migration).setPositiveButton("Guardar rutina", null)
+            .setCancelable(!migration).setPositiveButton(confirmText, null)
         if (!migration) dialog.setNegativeButton("Cancelar", null)
         val shown = dialog.create()
         shown.setOnShowListener { shown.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
@@ -1142,25 +1215,36 @@ class MainActivity : GymFitActivity() {
         sessionFieldKey = null
         sessionReadOnly = false
         exerciseRuns.clear()
-        sessionDay = ""
+        sessionDateDay = null
         sessionIndex = 0
         plan = monthly.active()?.plan ?: RoutinePlan(emptyList())
         progress.clear()
         progress.putAll(monthly.active()?.progress.orEmpty())
         resetMorning()
-        selectedWeek = plan.weeks().firstOrNull() ?: 1
-        RoutineStore.saveActiveWeek(this, selectedWeek)
+        selectedDateDay = RoutinePresentation.initialDay(plan)
         page = Page.TODAY
         showPage(Page.TODAY)
     }
 
     /** Genera una instantánea de un único documento o la plantilla del mes actual. */
     private fun downloadWorkbook(document: MonthlyRoutine? = null) {
+        if (document == null) {
+            chooseMonth("Mes de la plantilla", YearMonth.now(), confirmText = "Crear Excel") { period ->
+                prepareWorkbook(null, period)
+            }
+            return
+        }
+        prepareWorkbook(document, document.month)
+    }
+
+    /** Genera el archivo mensual o el informe histórico que espera el selector de destino. */
+    private fun prepareWorkbook(document: MonthlyRoutine?, period: YearMonth) {
         try {
             saveSessionFields()
             val selected = document?.let { monthly.read(it.id) }
-            val period = selected?.month ?: YearMonth.now()
-            pendingWorkbook.outputStream().use { RoutineWorkbook.write(it, selected?.plan ?: embeddedPlan(), period, selected) }
+            val source = selected?.plan ?: embeddedPlan()
+            val exportPlan = if (source.isMonthlyCalendar()) MonthlyPlanTemplate.forMonth(source, period) else source
+            pendingWorkbook.outputStream().use { RoutineWorkbook.write(it, exportPlan, period, selected) }
             val filename = selected?.id ?: "%02d_%04d".format(Locale.ROOT, period.monthValue, period.year)
             saveTemplate.launch("$filename.xlsx")
         } catch (error: Exception) { Toast.makeText(this, "No se pudo preparar el Excel: ${error.message}", Toast.LENGTH_LONG).show() }
@@ -1193,12 +1277,14 @@ class MainActivity : GymFitActivity() {
         add(body, text("Planificación", 19f, bold = true), bottom = 10)
         document.plan.morningSteps.forEach { step -> add(body, text("Mañana · ${step.title} · ${formatTime(step.seconds)}\n${step.instruction}", 14f), bottom = 8) }
         document.plan.exercises.forEach { item ->
-            add(body, text("Semana ${item.week} · ${item.day}\n${item.exercise}: ${item.series} series · ${item.reps} · descanso ${item.rest}\n${item.instruction}", 14f), bottom = 10)
+            val location = RoutinePresentation.exerciseLocation(document.month, item)
+            add(body, text("$location\n${item.exercise}: ${item.series} series · ${item.reps} · descanso ${item.rest}\n${item.instruction}", 14f), bottom = 10)
         }
         add(body, text("Entrenamientos realizados", 19f, bold = true), top = 12, bottom = 10)
         if (document.workouts.isEmpty()) add(body, text("Sin entrenamientos registrados.", 14f))
         document.workouts.forEach { record ->
-            add(body, text("${record.day} · Semana ${record.week}\n${record.startedAt.ifBlank { "Fecha desconocida" }} · ${if (record.finishedAt.isBlank() && record.kind != "anterior") "En curso" else "Guardado"}", 15f, bold = true), top = 12)
+            val location = RoutinePresentation.workoutLocation(document.month, record)
+            add(body, text("$location\n${record.startedAt.ifBlank { "Fecha desconocida" }} · ${if (record.finishedAt.isBlank() && record.kind != "anterior") "En curso" else "Guardado"}", 15f, bold = true), top = 12)
             record.results.forEach { (key, value) ->
                 val name = document.plan.exercises.firstOrNull { it.key() == key }?.exercise ?: key
                 add(body, text("$name · ${if (value.done) "Hecho" else "Pendiente"}\nPeso: ${value.weight} · Reps: ${value.actualReps} · RIR: ${value.rir}\n${value.userNote}", 14f), top = 6)
