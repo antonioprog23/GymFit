@@ -47,6 +47,24 @@ class RoutinePresentationTest {
         assertFalse(summary.groups.isEmpty())
     }
 
+    @Test fun weightHistoryKeepsDocumentAndExtraSessionProvenance() {
+        val plan = monthlyPlan(1)
+        val exercise = plan.exercises.single()
+        val document = MonthlyRoutine("10_2026_1", YearMonth.of(2026, 10), "2026-10-01", plan)
+        document.workouts += WorkoutRecord("run", 1, exercise.day, "2026-10-12T18:00:00+02:00",
+            "2026-10-12T19:00:00+02:00", mutableMapOf(exercise.key() to
+                ExerciseProgress(weight = "40", actualReps = "10", rir = "2", done = true)),
+            kind = "extra", dayOfMonth = 1)
+
+        val entry = RoutinePresentation.weightHistory(listOf(document)).single()
+
+        assertEquals(exercise.exercise, entry.exercise)
+        assertEquals("40", entry.weight)
+        assertEquals("10_2026_1", entry.routineId)
+        assertEquals("12 de octubre", entry.dateLabel)
+        assertTrue(entry.extra)
+    }
+
     private fun monthlyPlan(days: Int): RoutinePlan {
         val month = YearMonth.of(2026, 10)
         val exercises = (1..days).map { day ->

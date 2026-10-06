@@ -11,36 +11,65 @@ import java.time.ZonedDateTime
 import java.util.Locale
 import java.util.UUID
 
-/** Repositorio de documentos mensuales con sustitución atómica y selección activa persistida. */
+/** Estado visible de un documento respecto al mes actual y a la selección principal. */
+enum class MonthlyRoutineStatus { ACTIVE, PROGRAMMED, HISTORICAL, ALTERNATIVE }
+
+/** Repositorio de documentos mensuales con selección principal por período. */
 class MonthlyRepository(
-    /** Carpeta privada que contiene exclusivamente las rutinas de la aplicación. */
-    private val folder: File
+    private val folder: File,
+    /** Proveedor inyectable para probar cambios de mes sin depender del reloj real. */
+    private val currentMonth: () -> YearMonth = { YearMonth.now() }
 ) {
-    /** Recupera la rutina activa; un archivo dañado produce un error explícito. */
-    @Synchronized fun active(): MonthlyRoutine? {
-        val pointer = File(folder, "active.txt")
-        if (!pointer.exists()) return null
-        return pointer.readText().trim().takeIf { it.isNotEmpty() }?.let(::read)
+    /** Recupera exclusivamente la rutina principal del mes actual. */
+    @Synchronized fun active(): MonthlyRoutine? = primary(currentMonth())
+
+    /** Recupera la rutina principal elegida para un período, si todavía existe. */
+    @Synchronized fun primary(month: YearMonth): MonthlyRoutine? =
+        principals()[month.toString()]?.takeIf(::exists)?.let(::read)
+
+    /** Indica que ya existe almacenamiento mensual, aunque este mes no tenga principal. */
+    @Synchronized fun hasMonthlyState(): Boolean = File(folder, POINTER).exists() ||
+        File(folder, PRINCIPALS).exists() || rawFiles().isNotEmpty()
+
+    /** Clasifica un documento sin confundir una alternativa con un histórico. */
+    @Synchronized fun status(document: MonthlyRoutine): MonthlyRoutineStatus {
+        val primaryId = principals()[document.month.toString()]
+        if (primaryId != document.id) {
+            val selected = primaryId?.takeIf(::exists)?.let(::read)
+            return if (selected != null && document.importedAt < selected.importedAt)
+                MonthlyRoutineStatus.HISTORICAL else MonthlyRoutineStatus.ALTERNATIVE
+        }
+        return when {
+            document.month == currentMonth() -> MonthlyRoutineStatus.ACTIVE
+            document.month > currentMonth() -> MonthlyRoutineStatus.PROGRAMMED
+            else -> MonthlyRoutineStatus.HISTORICAL
+        }
     }
 
-    /** Indica que el almacenamiento mensual ya sustituyó a las preferencias antiguas. */
-    fun hasMonthlyState(): Boolean = File(folder, "active.txt").exists()
+    /** Marca un documento como principal de su mes sin borrar la selección anterior. */
+    @Synchronized fun setPrimary(id: String): MonthlyRoutine {
+        val document = read(id)
+        val current = active()
+        check(document.month != currentMonth() || current?.id == id || current?.hasPendingWorkout() != true) {
+            "Finaliza el entrenamiento pendiente antes de cambiar la rutina activa."
+        }
+        savePrincipals(principals().toMutableMap().apply { put(document.month.toString(), id) })
+        if (document.month == currentMonth()) writeAtomic(File(folder, POINTER), id)
+        return document
+    }
 
-    /** Elimina una importación concreta; una activa con entrenamientos pendientes queda protegida. */
+    /** Elimina una importación concreta sin tocar sus hermanas ni elegir sustitutas. */
     @Synchronized fun delete(id: String): Boolean {
         val document = read(id)
+        check(!document.hasPendingWorkout()) {
+            "Finaliza los entrenamientos pendientes antes de eliminar la rutina."
+        }
         val wasActive = active()?.id == id
-        check(!wasActive || document.workouts.none { it.kind != "anterior" && it.finishedAt.isBlank() }) {
-            "Finaliza los entrenamientos pendientes antes de eliminar la rutina activa."
-        }
-        val pointer = File(folder, "active.txt")
-        if (wasActive) writeAtomic(pointer, "")
-        try {
-            Files.delete(File(folder, "$id.json").toPath())
-        } catch (error: Exception) {
-            if (wasActive) writeAtomic(pointer, id)
-            throw error
-        }
+        val selected = principals().toMutableMap()
+        if (selected[document.month.toString()] == id) selected.remove(document.month.toString())
+        Files.delete(File(folder, "$id.json").toPath())
+        savePrincipals(selected)
+        if (wasActive) writeAtomic(File(folder, POINTER), "")
         return wasActive
     }
 
@@ -66,18 +95,16 @@ class MonthlyRepository(
     }
 
     /** Lista todas las importaciones conservadas, con las más recientes primero. */
-    @Synchronized fun list(): List<MonthlyRoutine> = folder.listFiles().orEmpty()
-        .filter { it.extension == "json" && ID.matches(it.nameWithoutExtension) }
-        .map { read(it.nameWithoutExtension) }.sortedByDescending { it.importedAt }
+    @Synchronized fun list(): List<MonthlyRoutine> = rawList()
 
-    /** Crea un documento sin sobrescribir colisiones y lo activa solo después de guardarlo. */
+    /** Crea sin sobrescribir y solo la hace principal cuando el usuario lo ha decidido. */
     @Synchronized fun create(plan: RoutinePlan, month: YearMonth,
-        legacy: Map<String, ExerciseProgress>? = null): MonthlyRoutine {
+        legacy: Map<String, ExerciseProgress>? = null, makePrimary: Boolean = primary(month) == null): MonthlyRoutine {
         check(folder.isDirectory || folder.mkdirs()) { "No se pudo crear la carpeta de rutinas" }
         val base = "%02d_%04d".format(Locale.ROOT, month.monthValue, month.year)
         var id = base
         var suffix = 1
-        while (File(folder, "$id.json").exists()) id = "${base}_${suffix++}"
+        while (exists(id)) id = "${base}_${suffix++}"
         val document = MonthlyRoutine(id, month, now(), plan, migrated = legacy != null)
         legacy?.let {
             document.progress.putAll(copyResults(it))
@@ -85,11 +112,11 @@ class MonthlyRepository(
                 "Datos anteriores (fecha desconocida)", "", results = copyResults(it), kind = "anterior")
         }
         save(document)
-        writeAtomic(File(folder, "active.txt"), id)
+        if (makePrimary) setPrimary(id)
         return document
     }
 
-    /** Persiste un documento completo, manteniendo el archivo anterior si falla la escritura. */
+    /** Persiste un documento completo manteniendo el esquema compatible actual. */
     @Synchronized fun save(document: MonthlyRoutine) {
         require(ID.matches(document.id))
         val root = JSONObject().put("schemaVersion", 3).put("month", document.month.toString())
@@ -106,30 +133,34 @@ class MonthlyRepository(
         writeAtomic(File(folder, "${document.id}.json"), root.toString(2))
     }
 
-    /** Abre o recupera una realización pendiente; repetir conserva los resultados anteriores. */
+    /** Abre o recupera una realización semanal antigua en el documento activo. */
     @Synchronized fun begin(week: Int, day: String, repeat: Boolean = false) {
         val doc = active() ?: return
-        beginWorkout(doc, doc.plan.forDay(week, day), week, day, null, repeat) {
+        beginWorkout(doc, doc.plan.forDay(week, day), week, day, null, repeat, "tarde") {
             it.week == week && it.day == day
         }
     }
 
-    /** Abre una realización vinculada a una fecha concreta del documento mensual. */
-    @Synchronized fun beginDate(dayOfMonth: Int, repeat: Boolean = false) {
-        val doc = active() ?: return
+    /** Abre una realización mensual en el documento indicado; puede ser una sesión extra. */
+    @Synchronized fun beginDate(id: String, dayOfMonth: Int, repeat: Boolean = false, extra: Boolean = false) {
+        val doc = read(id)
         require(dayOfMonth in 1..doc.month.lengthOfMonth()) { "Día fuera del mes de la rutina" }
         val items = doc.plan.forDate(dayOfMonth)
-        beginWorkout(doc, items, (dayOfMonth - 1) / 7 + 1, items.firstOrNull()?.day.orEmpty(), dayOfMonth, repeat) {
-            it.dayOfMonth == dayOfMonth
-        }
+        val kind = if (extra) "extra" else "tarde"
+        beginWorkout(doc, items, (dayOfMonth - 1) / 7 + 1, items.firstOrNull()?.day.orEmpty(),
+            dayOfMonth, repeat, kind) { it.dayOfMonth == dayOfMonth && it.kind == kind }
     }
 
-    /** Actualiza resultados actuales y sus realizaciones abiertas sin tocar sesiones cerradas. */
-    @Synchronized fun updateProgress(values: Map<String, ExerciseProgress>) {
-        val doc = active() ?: return
+    @Synchronized fun beginDate(dayOfMonth: Int, repeat: Boolean = false) {
+        active()?.let { beginDate(it.id, dayOfMonth, repeat) }
+    }
+
+    /** Actualiza resultados y las realizaciones abiertas del documento indicado. */
+    @Synchronized fun updateProgress(id: String, values: Map<String, ExerciseProgress>) {
+        val doc = read(id)
         doc.progress.clear()
         doc.progress.putAll(copyResults(values))
-        doc.workouts.filter { it.kind == "tarde" && it.finishedAt.isEmpty() }.forEach { record ->
+        doc.workouts.filter { it.kind in setOf("tarde", "extra") && it.finishedAt.isEmpty() }.forEach { record ->
             val exercises = record.dayOfMonth?.let(doc.plan::forDate) ?: doc.plan.forDay(record.week, record.day)
             exercises.forEach { exercise ->
                 values[exercise.key()]?.let { record.results[exercise.key()] = it.copy() }
@@ -138,20 +169,29 @@ class MonthlyRepository(
         save(doc)
     }
 
-    /** Cierra una realización una sola vez y conserva su fecha real. */
+    @Synchronized fun updateProgress(values: Map<String, ExerciseProgress>) {
+        active()?.let { updateProgress(it.id, values) }
+    }
+
+    /** Cierra una realización semanal heredada sin alterar las ya finalizadas. */
     @Synchronized fun finish(week: Int, day: String) {
         val doc = active() ?: return
-        finishWorkout(doc) { it.week == week && it.day == day }
+        finishWorkout(doc) { it.week == week && it.day == day && it.kind == "tarde" }
     }
 
-    /** Cierra la realización abierta de una fecha mensual concreta. */
-    @Synchronized fun finishDate(dayOfMonth: Int) {
-        val doc = active() ?: return
+    /** Cierra la realización abierta del documento y fecha indicados. */
+    @Synchronized fun finishDate(id: String, dayOfMonth: Int, extra: Boolean = false) {
+        val doc = read(id)
         require(dayOfMonth in 1..doc.month.lengthOfMonth()) { "Día fuera del mes de la rutina" }
-        finishWorkout(doc) { it.dayOfMonth == dayOfMonth }
+        val kind = if (extra) "extra" else "tarde"
+        finishWorkout(doc) { it.dayOfMonth == dayOfMonth && it.kind == kind }
     }
 
-    /** Conserva el comienzo real de una sesión matinal y reanuda una pendiente. */
+    @Synchronized fun finishDate(dayOfMonth: Int) {
+        active()?.let { finishDate(it.id, dayOfMonth) }
+    }
+
+    /** Conserva el comienzo real de una sesión matinal activa. */
     @Synchronized fun beginMorning() {
         val doc = active() ?: return
         if (doc.workouts.any { it.kind == "mañana" && it.finishedAt.isBlank() }) return
@@ -175,30 +215,67 @@ class MonthlyRepository(
         save(doc)
     }
 
-    /** Escribe y sincroniza un temporal antes de reemplazar atómicamente el destino. */
+    /** Migra active.txt y elige una principal segura para cada mes sin tocar sus JSON. */
+    private fun principals(): Map<String, String> {
+        val file = File(folder, PRINCIPALS)
+        if (file.exists()) {
+            val root = JSONObject(file.readText())
+            return root.keys().asSequence().associateWith { root.getString(it) }.filterValues(::exists)
+        }
+        val documents = rawList()
+        if (documents.isEmpty()) return emptyMap()
+        val legacyPointer = File(folder, POINTER)
+        val legacyActive = legacyPointer.takeIf(File::exists)?.readText()?.trim()
+        val selected = documents.groupBy { it.month }.mapNotNull { (month, options) ->
+            if (month == currentMonth() && legacyPointer.exists() && legacyActive.isNullOrEmpty()) null
+            else month.toString() to (options.firstOrNull { it.id == legacyActive }?.id
+                ?: options.maxBy { it.importedAt }.id)
+        }.toMap()
+        savePrincipals(selected)
+        return selected
+    }
+
+    private fun savePrincipals(values: Map<String, String>) {
+        writeAtomic(File(folder, PRINCIPALS), JSONObject().apply {
+            values.filterValues(::exists).forEach { (month, id) -> put(month, id) }
+        }.toString(2))
+    }
+
+    private fun rawFiles(): List<File> = folder.listFiles().orEmpty()
+        .filter { it.extension == "json" && ID.matches(it.nameWithoutExtension) }
+
+    private fun rawList(): List<MonthlyRoutine> = rawFiles().map { read(it.nameWithoutExtension) }
+        .sortedByDescending { it.importedAt }
+
+    private fun exists(id: String): Boolean = ID.matches(id) && File(folder, "$id.json").isFile
+
+    private fun MonthlyRoutine.hasPendingWorkout(): Boolean =
+        workouts.any { it.kind != "anterior" && it.finishedAt.isBlank() }
+
     private fun writeAtomic(target: File, text: String) {
         check(folder.isDirectory || folder.mkdirs())
         val temporary = File(folder, "${target.name}.tmp")
-        FileOutputStream(temporary).use { output -> output.write(text.toByteArray(Charsets.UTF_8)); output.fd.sync() }
-        Files.move(temporary.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+        FileOutputStream(temporary).use { output ->
+            output.write(text.toByteArray(Charsets.UTF_8)); output.fd.sync()
+        }
+        Files.move(temporary.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE,
+            StandardCopyOption.REPLACE_EXISTING)
     }
 
-    /** Copia registros mutables para evitar compartirlos entre realizaciones. */
     private fun copyResults(values: Map<String, ExerciseProgress>): MutableMap<String, ExerciseProgress> =
         values.mapValuesTo(mutableMapOf()) { it.value.copy() }
 
-    /** Implementación común de apertura para sesiones mensuales y registros históricos compatibles. */
     private fun beginWorkout(document: MonthlyRoutine, items: List<RoutineExercise>, week: Int, day: String,
-        dayOfMonth: Int?, repeat: Boolean, matches: (WorkoutRecord) -> Boolean) {
+        dayOfMonth: Int?, repeat: Boolean, kind: String, matches: (WorkoutRecord) -> Boolean) {
         if (items.isEmpty()) return
-        val pending = document.workouts.lastOrNull {
-            it.kind == "tarde" && it.finishedAt.isEmpty() && matches(it)
-        }
+        val pending = document.workouts.lastOrNull { it.kind == kind && it.finishedAt.isEmpty() && matches(it) }
         if (pending != null && !repeat) return
         if (repeat) pending?.finishedAt = now()
-        val record = WorkoutRecord(UUID.randomUUID().toString(), week, day, now(), dayOfMonth = dayOfMonth)
+        val record = WorkoutRecord(UUID.randomUUID().toString(), week, day, now(),
+            dayOfMonth = dayOfMonth, kind = kind)
         items.forEach { item ->
-            val value = if (repeat) ExerciseProgress() else document.progress[item.key()]?.copy() ?: ExerciseProgress()
+            val value = if (repeat) ExerciseProgress() else
+                document.progress[item.key()]?.copy() ?: ExerciseProgress()
             record.results[item.key()] = value.copy()
             document.progress[item.key()] = value
         }
@@ -206,19 +283,18 @@ class MonthlyRepository(
         save(document)
     }
 
-    /** Implementación común de cierre que solo afecta a la última realización pendiente coincidente. */
     private fun finishWorkout(document: MonthlyRoutine, matches: (WorkoutRecord) -> Boolean) {
         document.workouts.lastOrNull {
-            it.kind == "tarde" && it.finishedAt.isEmpty() && matches(it)
+            it.kind in setOf("tarde", "extra") && it.finishedAt.isEmpty() && matches(it)
         }?.finishedAt = now()
         save(document)
     }
 
-    /** Captura la fecha real con el desplazamiento horario del dispositivo. */
     private fun now(): String = ZonedDateTime.now().toOffsetDateTime().toString()
 
     private companion object {
-        /** Patrón cerrado que impide rutas externas a la carpeta privada. */
+        const val POINTER = "active.txt"
+        const val PRINCIPALS = "principals.json"
         val ID = Regex("\\d{2}_\\d{4}(?:_\\d+)?")
     }
 }

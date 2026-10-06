@@ -1,6 +1,7 @@
 package com.rutinaboxeo.app
 
 import java.time.LocalDate
+import java.time.OffsetDateTime
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
@@ -22,6 +23,19 @@ data class RoutineProgressSummary(
 data class RoutineProgressEntry(val label: String, val completed: Int, val total: Int) {
     val isComplete: Boolean get() = total > 0 && completed == total
 }
+
+/** Resultado de peso localizable sin mezclar la identidad persistida de los ejercicios. */
+data class ExerciseWeightEntry(
+    val exercise: String,
+    val weight: String,
+    val reps: String,
+    val rir: String,
+    val dateLabel: String,
+    val routineId: String,
+    val month: YearMonth,
+    val extra: Boolean,
+    val startedAt: String
+)
 
 /** Prepara fechas y agregados sin depender de Android ni de las vistas. */
 object RoutinePresentation {
@@ -65,6 +79,22 @@ object RoutinePresentation {
     /** Título del período mensual en español. */
     fun monthTitle(month: YearMonth): String =
         "${month.month.getDisplayName(TextStyle.FULL, locale).replaceFirstChar { it.titlecase(locale) }} ${month.year}"
+
+    /** Reúne pesos de cualquier documento indicando siempre su procedencia y fecha real. */
+    fun weightHistory(documents: List<MonthlyRoutine>): List<ExerciseWeightEntry> = documents.flatMap { document ->
+        document.workouts.flatMap { record ->
+            record.results.mapNotNull { (key, value) ->
+                val weight = value.weight.trim().takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+                val exercise = document.plan.exercises.firstOrNull { it.key() == key }?.exercise ?: key
+                ExerciseWeightEntry(exercise, weight, value.actualReps, value.rir,
+                    workoutDate(record.startedAt), document.id, document.month, record.kind == "extra", record.startedAt)
+            }
+        }
+    }.sortedByDescending { it.startedAt }
+
+    private fun workoutDate(value: String): String = runCatching {
+        OffsetDateTime.parse(value).toLocalDate().format(dayMonth)
+    }.getOrDefault("Fecha desconocida")
 
     private fun monthlyProgress(plan: RoutinePlan, values: Map<String, ExerciseProgress>, completed: Int): RoutineProgressSummary {
         val month = requireNotNull(plan.month)

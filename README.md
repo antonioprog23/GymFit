@@ -7,7 +7,7 @@ Aplicación Android nativa y local para seguir una rutina de boxeo y gimnasio a 
 - Pantalla **Hoy**: separa una rutina guiada de movilidad matinal de 15 minutos y el entrenamiento de tarde.
 - Rutina de mañana cargada desde la hoja `Mañana` del Excel, con temporizador, pausa y registro de finalización diaria.
 - Pantalla **Rutina**: muestra el calendario real del mes y permite abrir cada fecha.
-- Pantalla **Progreso**: muestra ejercicios completados por tramos del mes e historial.
+- Pantalla **Progreso**: muestra ejercicios completados, historial y pesos por ejercicio entre documentos.
 - Pantalla **Plantilla**: importa, descarga y comparte el Excel editable.
 - Importación de `.xlsx` desde el almacenamiento del móvil.
 - Lee `Periodo`, `Calendario`, `Rutina`, `Mañana` y `Alternativas`.
@@ -69,9 +69,19 @@ La reproducción requiere Internet; si YouTube restringe el vídeo, usa «Abrir 
 YouTube». El reproductor se carga únicamente al pulsar el botón y conserva sus
 controles oficiales. No se descargan vídeos ni se necesitan claves de API.
 
-## Rutinas mensuales e histórico
+## Rutina principal y otras rutinas
 
-En «Mis rutinas», abre una importación y pulsa «Eliminar rutina». La confirmación
+La principal del mes actual es la única rutina activa. Las principales futuras quedan
+programadas y se activan al llegar su mes; las anteriores permanecen como históricas.
+«Otras rutinas», accesible desde Rutina y Plantilla, separa programadas, históricas y
+alternativas. Cada documento dispone de Planificación, Progreso e Historial.
+
+Al importar de nuevo el mismo período se elige entre conservar la principal actual o
+usar la nueva. Ambas importaciones se conservan y sus resultados nunca se mezclan.
+Una alternativa puede ejecutarse como sesión extra: su progreso se escribe en su propio
+documento y la principal no cambia.
+
+En «Otras rutinas», abre una importación y pulsa «Eliminar rutina». La confirmación
 identifica el documento exacto y advierte de que el borrado no se puede deshacer.
 «Exportar antes» solo exporta: después hay que volver a solicitar el borrado.
 La Excel conserva los resultados para consulta, pero no restaura el historial al importarla.
@@ -81,7 +91,8 @@ se recuperan datos antiguos. Los demás documentos permanecen intactos.
 
 - Una importación crea un documento en la carpeta privada `files/routines/`.
 - Nombres: `09_2026.json`, `09_2026_1.json`, `09_2026_2.json`… sin sobrescrituras.
-- `active.txt` identifica la rutina activa. Las demás permanecen en el histórico.
+- `principals.json` identifica la principal de cada período. En la primera apertura se
+  genera desde el antiguo `active.txt` sin modificar los JSON ni sus resultados.
 - Los JSON nuevos usan el esquema 3: incluyen calendario, `dayOfMonth`, mes,
   importación, planificación, últimos resultados y realizaciones de tarde y mañana.
 - Los JSON de esquema 2 continúan leyéndose como histórico. Conservan semana y día,
@@ -89,7 +100,7 @@ se recuperan datos antiguos. Los demás documentos permanecen intactos.
 - Los campos se guardan tras 400 ms sin escribir y al cambiar de pantalla o salir.
 - Una sesión finalizada queda en consulta; «Repetir entrenamiento» abre un registro
   nuevo sin modificar las realizaciones anteriores.
-- «Mis rutinas», en Rutina y Plantilla, muestra la planificación e historial mensual.
+- «Otras rutinas», en Rutina y Plantilla, muestra planificación, progreso e historial.
 - «Exportar rutina y resultados» permite elegir un solo documento activo o histórico.
   Nunca se combinan resultados de distintas importaciones en una exportación.
 - La migración solicita mes y año y conserva los resultados anteriores sin inventar
@@ -108,7 +119,8 @@ A Ejercicio principal | B Alternativa 1 | C Alternativa 2 | D Nota
 ## Fecha activa
 
 En `Rutina` se selecciona un día real del mes. `Hoy` abre automáticamente la fecha
-actual solo cuando coincide con el período de la rutina activa.
+actual de la principal del período. Si no existe principal para el mes actual, la app
+queda sin rutina activa; nunca utiliza automáticamente una rutina de otro período.
 
 ## Organización del código
 

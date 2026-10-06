@@ -53,6 +53,9 @@ Lee solo la ruta relacionada con la tarea:
 - Una importación siempre empieza con progreso a cero. El historial exportado es informativo y no se restaura al reimportar.
 - No sobrescribas documentos mensuales: los ids son `MM_AAAA.json`, `MM_AAAA_1.json`, etc.
 - No mezcles el progreso de dos documentos. Al borrar el activo, no actives otro automáticamente.
+- La rutina activa es la principal del mes actual. `principals.json` conserva una principal por período;
+  las futuras son programadas y las restantes históricas o alternativas.
+- Una sesión extra siempre escribe mediante el id explícito de su documento y nunca modifica la principal.
 - Una rutina con sesiones pendientes no se puede eliminar.
 - Una repetición crea un `WorkoutRecord` nuevo; no modifica sesiones finalizadas.
 - El descanso ocurre después de cada serie, incluida la última. Mantén las transiciones en `ExerciseFlow`, no dupliques esa lógica en la UI.
@@ -85,6 +88,7 @@ Añade o actualiza la prueba más cercana al comportamiento:
 - Historial, migración, borrado o aislamiento mensual: `MonthlyRepositoryTest`.
 - Series, descansos y transiciones: `ExerciseFlowTest` y `ExerciseTimingTest`.
 - Modelos, ordenación y claves: `DomainModelTest`.
+- Calendario, progreso y consulta de pesos: `RoutinePresentationTest`.
 - Enlaces: `VideoLinksTest`.
 - Avisos finales: `RestCountdownCuesTest`.
 - Política de primera instalación/migración: `RoutineImportPolicyTest`.
