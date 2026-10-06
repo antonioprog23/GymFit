@@ -14,6 +14,29 @@ import java.util.UUID
 /** Estado visible de un documento respecto al mes actual y a la selección principal. */
 enum class MonthlyRoutineStatus { ACTIVE, PROGRAMMED, HISTORICAL, ALTERNATIVE }
 
+/** Instantánea coherente que evita releer JSON al dibujar una pantalla completa. */
+data class MonthlyRoutineSnapshot(
+    val documents: List<MonthlyRoutine>,
+    val primaryIds: Map<YearMonth, String>,
+    val currentMonth: YearMonth
+) {
+    val active: MonthlyRoutine? get() = primaryIds[currentMonth]?.let { id -> documents.firstOrNull { it.id == id } }
+
+    fun primary(month: YearMonth): MonthlyRoutine? =
+        primaryIds[month]?.let { id -> documents.firstOrNull { it.id == id } }
+
+    fun status(document: MonthlyRoutine): MonthlyRoutineStatus {
+        val selected = primary(document.month)
+        if (selected?.id != document.id) return if (selected != null && document.importedAt < selected.importedAt)
+            MonthlyRoutineStatus.HISTORICAL else MonthlyRoutineStatus.ALTERNATIVE
+        return when {
+            document.month == currentMonth -> MonthlyRoutineStatus.ACTIVE
+            document.month > currentMonth -> MonthlyRoutineStatus.PROGRAMMED
+            else -> MonthlyRoutineStatus.HISTORICAL
+        }
+    }
+}
+
 /** Repositorio de documentos mensuales con selección principal por período. */
 class MonthlyRepository(
     private val folder: File,
@@ -96,6 +119,15 @@ class MonthlyRepository(
 
     /** Lista todas las importaciones conservadas, con las más recientes primero. */
     @Synchronized fun list(): List<MonthlyRoutine> = rawList()
+
+    /** Lee documentos y selección una sola vez para consultas y renderizados agregados. */
+    @Synchronized fun snapshot(): MonthlyRoutineSnapshot {
+        val documents = rawList()
+        val ids = principals().mapNotNull { (month, id) ->
+            runCatching { YearMonth.parse(month) }.getOrNull()?.let { it to id }
+        }.toMap()
+        return MonthlyRoutineSnapshot(documents, ids, currentMonth())
+    }
 
     /** Crea sin sobrescribir y solo la hace principal cuando el usuario lo ha decidido. */
     @Synchronized fun create(plan: RoutinePlan, month: YearMonth,

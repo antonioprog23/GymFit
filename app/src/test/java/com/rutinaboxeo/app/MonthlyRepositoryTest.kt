@@ -172,6 +172,21 @@ class MonthlyRepositoryTest {
         assertEquals(MonthlyRoutineStatus.HISTORICAL, repository.status(october))
     }
 
+    @Test fun snapshotClassifiesAllDocumentsFromOneCoherentRead() {
+        val current = YearMonth.of(2026, 10)
+        val repository = MonthlyRepository(temporary.newFolder()) { current }
+        val active = repository.create(plan, current)
+        val alternative = repository.create(plan, current)
+        val future = repository.create(plan, YearMonth.of(2026, 11))
+
+        val snapshot = repository.snapshot()
+
+        assertEquals(active.id, snapshot.active!!.id)
+        assertEquals(MonthlyRoutineStatus.ALTERNATIVE, snapshot.status(alternative))
+        assertEquals(MonthlyRoutineStatus.PROGRAMMED, snapshot.status(future))
+        assertEquals(3, snapshot.documents.size)
+    }
+
     /** La migración respeta active.txt y no reescribe resultados de documentos existentes. */
     @Test fun legacyActivePointerBecomesPrimaryWithoutDataLoss() {
         val folder = temporary.newFolder()

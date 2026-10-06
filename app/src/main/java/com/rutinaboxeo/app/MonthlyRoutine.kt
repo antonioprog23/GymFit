@@ -43,3 +43,6 @@ data class WorkoutRecord(
     /** Día real del mes; vacío para realizaciones antiguas organizadas por semanas. */
     val dayOfMonth: Int? = null
 )
+
+/** Documento y tipo inseparables que identifican al dueño de una sesión visible. */
+data class WorkoutTarget(val documentId: String, val extra: Boolean = false)
