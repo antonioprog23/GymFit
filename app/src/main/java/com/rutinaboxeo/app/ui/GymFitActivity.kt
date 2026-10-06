@@ -15,30 +15,30 @@ import com.google.android.material.card.MaterialCardView
 /** Base visual que concentra la paleta y los componentes programáticos de GymFit. */
 abstract class GymFitActivity : AppCompatActivity() {
     /** Fondo de tarjetas adaptado al tema activo. */
-    protected val cardSurface by lazy(LazyThreadSafetyMode.NONE) { getColor(R.color.card_surface) }
+    internal val cardSurface by lazy(LazyThreadSafetyMode.NONE) { getColor(R.color.card_surface) }
     /** Color principal de texto y fondos oscuros. */
-    protected val ink by lazy(LazyThreadSafetyMode.NONE) { getColor(R.color.text_primary) }
+    internal val ink by lazy(LazyThreadSafetyMode.NONE) { getColor(R.color.text_primary) }
 
     /** Color secundario para textos informativos. */
-    protected val muted by lazy(LazyThreadSafetyMode.NONE) { getColor(R.color.text_secondary) }
+    internal val muted by lazy(LazyThreadSafetyMode.NONE) { getColor(R.color.text_secondary) }
 
     /** Color de marca para acciones y elementos activos. */
-    protected val red by lazy(LazyThreadSafetyMode.NONE) { getColor(R.color.brand_red) }
+    internal val red by lazy(LazyThreadSafetyMode.NONE) { getColor(R.color.brand_red) }
 
     /** Fondo suave para paneles informativos. */
-    protected val pale by lazy(LazyThreadSafetyMode.NONE) { getColor(R.color.surface_muted) }
+    internal val pale by lazy(LazyThreadSafetyMode.NONE) { getColor(R.color.surface_muted) }
 
     /** Color de bordes y separadores. */
-    protected val line by lazy(LazyThreadSafetyMode.NONE) { getColor(R.color.divider) }
+    internal val line by lazy(LazyThreadSafetyMode.NONE) { getColor(R.color.divider) }
 
     /** Color que representa estados completados. */
-    protected val green by lazy(LazyThreadSafetyMode.NONE) { getColor(R.color.green) }
+    internal val green by lazy(LazyThreadSafetyMode.NONE) { getColor(R.color.green) }
 
     /** Convierte píxeles independientes de densidad en píxeles físicos. */
-    protected fun dp(value: Int): Int = (value * resources.displayMetrics.density + 0.5f).toInt()
+    internal fun dp(value: Int): Int = (value * resources.displayMetrics.density + 0.5f).toInt()
 
     /** Crea un fondo redondeado con relleno y borde opcional. */
-    protected fun box(fill: Int, radius: Int = 16, border: Int? = null): GradientDrawable =
+    internal fun box(fill: Int, radius: Int = 16, border: Int? = null): GradientDrawable =
         GradientDrawable().apply {
             setColor(fill)
             cornerRadius = dp(radius).toFloat()
@@ -46,7 +46,7 @@ abstract class GymFitActivity : AppCompatActivity() {
         }
 
     /** Crea una etiqueta con la tipografía y el color coherentes de la aplicación. */
-    protected fun text(value: String, size: Float = 15f, color: Int = ink, bold: Boolean = false): TextView =
+    internal fun text(value: String, size: Float = 15f, color: Int = ink, bold: Boolean = false): TextView =
         TextView(this).apply {
             text = value
             textSize = size
@@ -56,19 +56,19 @@ abstract class GymFitActivity : AppCompatActivity() {
         }
 
     /** Crea una columna vertical con relleno uniforme opcional. */
-    protected fun col(padding: Int = 0): LinearLayout = LinearLayout(this).apply {
+    internal fun col(padding: Int = 0): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         setPadding(dp(padding), dp(padding), dp(padding), dp(padding))
     }
 
     /** Crea una fila horizontal con sus elementos centrados verticalmente. */
-    protected fun row(): LinearLayout = LinearLayout(this).apply {
+    internal fun row(): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
     }
 
     /** Añade una vista a una columna ocupando el ancho y aplicando márgenes verticales. */
-    protected fun add(parent: LinearLayout, child: View, top: Int = 0, bottom: Int = 0) {
+    internal fun add(parent: LinearLayout, child: View, top: Int = 0, bottom: Int = 0) {
         parent.addView(child, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply {
             topMargin = dp(top)
             bottomMargin = dp(bottom)
@@ -76,7 +76,7 @@ abstract class GymFitActivity : AppCompatActivity() {
     }
 
     /** Envuelve una vista en una tarjeta con fondo, borde y elevación coherentes. */
-    protected fun card(child: View, fill: Int = cardSurface, border: Int = line): MaterialCardView =
+    internal fun card(child: View, fill: Int = cardSurface, border: Int = line): MaterialCardView =
         MaterialCardView(this).apply {
             setCardBackgroundColor(fill)
             radius = dp(16).toFloat()
@@ -87,7 +87,7 @@ abstract class GymFitActivity : AppCompatActivity() {
         }
 
     /** Crea un botón primario o secundario con el estilo de la aplicación. */
-    protected fun button(value: String, filled: Boolean = true): MaterialButton = MaterialButton(this).apply {
+    internal fun button(value: String, filled: Boolean = true): MaterialButton = MaterialButton(this).apply {
         text = value
         isAllCaps = false
         textSize = 15f

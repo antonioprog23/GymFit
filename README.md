@@ -125,7 +125,7 @@ queda sin rutina activa; nunca utiliza automáticamente una rutina de otro perí
 ## Organización del código
 
 - `MainActivity`: navegación y coordinación de los flujos de mañana, tarde, progreso y plantilla.
-- `ui/GymFitActivity`: paleta y componentes visuales reutilizables.
+- `ui/GymFitActivity` y `ui/RoutineLibraryRenderer`: componentes visuales y pantallas de la biblioteca mensual.
 - `Models`, `RoutinePresentation`, `ExerciseFlow`, `ExerciseTiming` y `ExerciseGuide`: modelos, agregados de progreso y reglas de dominio sin dependencias de interfaz.
 - `XlsxRoutineParser` y `VideoLinks`: importación validada y segura de la plantilla.
 - `RoutineStore` y `RoutineJson`: persistencia local y serialización, separadas para mantener responsabilidades claras.
