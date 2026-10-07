@@ -22,11 +22,13 @@ Lee solo la ruta relacionada con la tarea:
 
 - Navegación, pantallas y coordinación: `app/src/main/java/com/rutinaboxeo/app/MainActivity.kt`.
   - Es una actividad única con vistas programáticas y una barra inferior.
-  - Las páginas están en el enum privado `Page`: `TODAY`, `MORNING`, `ROUTINE`, `SESSION`, `PROGRESS`, `TEMPLATE`.
+  - Las páginas están en el enum privado `Page`: `TODAY`, `MORNING`, `ROUTINE`, `SESSION`,
+    `PROGRESS`, `OTHER_ROUTINES`, `MONTH_ROUTINES`, `ROUTINE_DETAIL` y `TEMPLATE`.
   - También coordina los temporizadores, selectores de archivos, importación/exportación y guardado diferido.
 - Componentes y paleta visual reutilizables: `ui/GymFitActivity.kt`; biblioteca mensual: `ui/RoutineLibraryRenderer.kt`; colores y temas: `res/values*/`.
 - Modelo central e índices del plan: `Models.kt`.
-- Agregados de calendario, fechas y progreso para la interfaz: `RoutinePresentation.kt`.
+- Agregados de calendario, fechas y progreso para la interfaz: `RoutinePresentation.kt`;
+  agrupación del histórico por año y mes: `RoutineArchivePresentation.kt`.
 - Máquina de estados pura de cada ejercicio: `ExerciseFlow.kt`.
 - Interpretación de series, trabajo y descanso: `ExerciseTiming.kt`.
 - Pasos de mañana: `MorningRoutine.kt`; textos de ayuda: `ExerciseGuide.kt`.

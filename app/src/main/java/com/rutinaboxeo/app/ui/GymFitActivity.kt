@@ -6,6 +6,7 @@ import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.view.View
 import android.widget.LinearLayout
+import android.widget.FrameLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import com.rutinaboxeo.app.R
@@ -34,6 +35,12 @@ abstract class GymFitActivity : AppCompatActivity() {
     /** Color que representa estados completados. */
     internal val green by lazy(LazyThreadSafetyMode.NONE) { getColor(R.color.green) }
 
+    /** Color de apoyo para recuperación y elementos programados. */
+    internal val orange by lazy(LazyThreadSafetyMode.NONE) { getColor(R.color.orange) }
+
+    /** Rojo reservado para acciones destructivas. */
+    internal val danger by lazy(LazyThreadSafetyMode.NONE) { getColor(R.color.danger) }
+
     /** Convierte píxeles independientes de densidad en píxeles físicos. */
     internal fun dp(value: Int): Int = (value * resources.displayMetrics.density + 0.5f).toInt()
 
@@ -52,7 +59,7 @@ abstract class GymFitActivity : AppCompatActivity() {
             textSize = size
             setTextColor(color)
             includeFontPadding = false
-            if (bold) typeface = Typeface.create("sans-serif-condensed", Typeface.BOLD)
+            if (bold) typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
         }
 
     /** Crea una columna vertical con relleno uniforme opcional. */
@@ -79,29 +86,60 @@ abstract class GymFitActivity : AppCompatActivity() {
     internal fun card(child: View, fill: Int = cardSurface, border: Int = line): MaterialCardView =
         MaterialCardView(this).apply {
             setCardBackgroundColor(fill)
-            radius = dp(16).toFloat()
-            cardElevation = dp(1).toFloat()
+            radius = dp(20).toFloat()
+            cardElevation = 0f
             strokeColor = border
             strokeWidth = dp(1)
             addView(child)
         }
+
+    /** Barra de progreso compacta usada en calendarios, archivo y sesiones. */
+    internal fun progressBar(percent: Int, color: Int = red, height: Int = 8): FrameLayout =
+        FrameLayout(this).apply {
+            background = box(pale, height)
+            val value = View(context).apply { background = box(color, height) }
+            addView(value, FrameLayout.LayoutParams(0, dp(height)))
+            post {
+                value.layoutParams = FrameLayout.LayoutParams(
+                    width * percent.coerceIn(0, 100) / 100,
+                    dp(height)
+                )
+            }
+        }
+
+    /** Celda bento para una cifra y su etiqueta. */
+    internal fun metric(value: String, label: String, accent: Int = ink): MaterialCardView =
+        card(col(13).apply {
+            add(this, text(value, 21f, accent, true))
+            add(this, text(label, 12f, muted), 4)
+        })
 
     /** Crea un botón primario o secundario con el estilo de la aplicación. */
     internal fun button(value: String, filled: Boolean = true): MaterialButton = MaterialButton(this).apply {
         text = value
         isAllCaps = false
         textSize = 15f
-        typeface = Typeface.create("sans-serif-condensed", Typeface.BOLD)
-        cornerRadius = dp(10)
-        minHeight = dp(48)
+        typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+        cornerRadius = dp(14)
+        minHeight = dp(52)
         insetTop = 0
         insetBottom = 0
         backgroundTintList = ColorStateList.valueOf(if (filled) red else cardSurface)
         setTextColor(if (filled) getColor(R.color.on_accent) else red)
-        if (!filled) {
-            strokeColor = ColorStateList.valueOf(red)
-            strokeWidth = dp(1)
+        if (!filled) strokeWidth = 0
+    }
+
+    /** Crea una etiqueta de estado compacta y legible además del color. */
+    internal fun chip(value: String, color: Int = red, fill: Int = pale): TextView =
+        text(value, 12f, color, true).apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(11), dp(6), dp(11), dp(6))
+            background = box(fill, 20)
         }
+
+    /** Crea un título de sección discreto para separar bloques sin recargar la pantalla. */
+    internal fun sectionTitle(value: String): TextView = text(value, 13f, muted, true).apply {
+        letterSpacing = 0.06f
     }
 
     private companion object {

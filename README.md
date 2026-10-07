@@ -8,7 +8,8 @@ Aplicación Android nativa y local para seguir una rutina de boxeo y gimnasio a 
 - Rutina de mañana cargada desde la hoja `Mañana` del Excel, con temporizador, pausa y registro de finalización diaria.
 - Pantalla **Rutina**: muestra el calendario real del mes y permite abrir cada fecha.
 - Pantalla **Progreso**: muestra ejercicios completados, historial y pesos por ejercicio entre documentos.
-- Pantalla **Plantilla**: importa, descarga y comparte el Excel editable.
+- Pantalla **Historial**: agrupa las rutinas por año y mes, separa la principal de las alternativas
+  y da acceso a importar, descargar y compartir el Excel editable.
 - Importación de `.xlsx` desde el almacenamiento del móvil.
 - Lee `Periodo`, `Calendario`, `Rutina`, `Mañana` y `Alternativas`.
 - Guarda localmente peso, reps reales, RIR, notas personales y ejercicios completados.
@@ -28,6 +29,11 @@ El botón de sol/luna de la cabecera alterna entre tema claro y oscuro. La elecc
 se guarda en preferencias privadas y se recupera al abrir la aplicación; inicialmente
 se utiliza el tema del dispositivo. El cambio conserva la pantalla, los campos y las
 series registradas, y pausa los temporizadores manteniendo el tiempo restante.
+
+La interfaz utiliza una composición bento clara y reconocible en ambos temas: azul para
+acciones y selección, naranja para recuperación y rutinas alternativas, y verde para
+estados completados. `Rutina` organiza la planificación como mes, día y sesión guiada;
+`Historial` navega desde el año al mes y después al documento principal o alternativo.
 
 ## Estructura de Excel
 
@@ -73,15 +79,16 @@ controles oficiales. No se descargan vídeos ni se necesitan claves de API.
 
 La principal del mes actual es la única rutina activa. Las principales futuras quedan
 programadas y se activan al llegar su mes; las anteriores permanecen como históricas.
-«Otras rutinas», accesible desde Rutina y Plantilla, separa programadas, históricas y
-alternativas. Cada documento dispone de Planificación, Progreso e Historial.
+«Historial», accesible desde la barra inferior, organiza las rutinas por año y mes. Al abrir
+un período separa la principal de las demás importaciones. Cada documento dispone de
+Planificación, Progreso e Historial.
 
 Al importar de nuevo el mismo período se elige entre conservar la principal actual o
 usar la nueva. Ambas importaciones se conservan y sus resultados nunca se mezclan.
 Una alternativa puede ejecutarse como sesión extra: su progreso se escribe en su propio
 documento y la principal no cambia.
 
-En «Otras rutinas», abre una importación y pulsa «Eliminar rutina». La confirmación
+En «Historial», abre un mes y una importación y pulsa «Eliminar rutina». La confirmación
 identifica el documento exacto y advierte de que el borrado no se puede deshacer.
 «Exportar antes» solo exporta: después hay que volver a solicitar el borrado.
 La Excel conserva los resultados para consulta, pero no restaura el historial al importarla.
@@ -100,7 +107,8 @@ se recuperan datos antiguos. Los demás documentos permanecen intactos.
 - Los campos se guardan tras 400 ms sin escribir y al cambiar de pantalla o salir.
 - Una sesión finalizada queda en consulta; «Repetir entrenamiento» abre un registro
   nuevo sin modificar las realizaciones anteriores.
-- «Otras rutinas», en Rutina y Plantilla, muestra planificación, progreso e historial.
+- «Historial» agrupa las importaciones por año y mes y muestra planificación, progreso
+  e historial sin mezclar resultados.
 - «Exportar rutina y resultados» permite elegir un solo documento activo o histórico.
   Nunca se combinan resultados de distintas importaciones en una exportación.
 - La migración solicita mes y año y conserva los resultados anteriores sin inventar

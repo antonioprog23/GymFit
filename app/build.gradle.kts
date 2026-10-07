@@ -11,8 +11,8 @@ android {
         applicationId = "com.rutinaboxeo.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 11
-        versionName = "6"
+        versionCode = 12
+        versionName = "7"
     }
 
     buildTypes {
