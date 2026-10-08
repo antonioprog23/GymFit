@@ -41,7 +41,17 @@ data class WorkoutRecord(
     /** Distingue tarde, mañana y datos anteriores sin fecha. */
     val kind: String = "tarde",
     /** Día real del mes; vacío para realizaciones antiguas organizadas por semanas. */
-    val dayOfMonth: Int? = null
+    val dayOfMonth: Int? = null,
+    /** Punto exacto desde el que puede reanudarse una realización todavía abierta. */
+    var resumeState: WorkoutResumeState? = null
+)
+
+/** Estado provisional de una sesión; se elimina al consolidarla como finalizada. */
+data class WorkoutResumeState(
+    /** Ejercicio visible dentro de la sesión. */
+    val exerciseIndex: Int = 0,
+    /** Serie, fase y tiempo pendiente de cada ejercicio iniciado. */
+    val exerciseRuns: MutableMap<String, ExerciseRun> = mutableMapOf()
 )
 
 /** Documento y tipo inseparables que identifican al dueño de una sesión visible. */
