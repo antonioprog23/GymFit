@@ -32,6 +32,18 @@ class RoutineArchivePresentationTest {
         assertEquals(listOf(document.id), group.alternatives.map { it.id })
     }
 
+    @Test fun annualCalendarAlwaysContainsTwelveOrderedMonths() {
+        val september = YearMonth.of(2026, 9)
+        val document = routine("09_2026", september, "2026-09-01")
+        val snapshot = MonthlyRoutineSnapshot(listOf(document), mapOf(september to document.id), september)
+
+        val calendar = RoutineArchivePresentation.yearCalendar(snapshot, 2026)
+
+        assertEquals((1..12).toList(), calendar.map { it.month.monthValue })
+        assertEquals(document.id, calendar[8].primary?.id)
+        assertEquals(emptyList<MonthlyRoutine>(), calendar.first().routines)
+    }
+
     private fun routine(id: String, month: YearMonth, importedAt: String) =
         MonthlyRoutine(id, month, importedAt, RoutinePlan(emptyList(), month = month))
 }

@@ -12,6 +12,8 @@ import com.rutinaboxeo.app.RoutineArchivePresentation
 import com.rutinaboxeo.app.RoutinePresentation
 import com.rutinaboxeo.app.WorkoutRecord
 import java.time.YearMonth
+import java.time.format.TextStyle
+import java.util.Locale
 
 /** Renderiza la biblioteca mensual sin asumir navegación ni modificar persistencia. */
 class RoutineLibraryRenderer(private val ui: GymFitActivity) {
@@ -28,15 +30,22 @@ class RoutineLibraryRenderer(private val ui: GymFitActivity) {
         }
 
         val years = RoutineArchivePresentation.years(catalog)
-        val yearRow = ui.row()
-        years.forEachIndexed { index, year ->
-            yearRow.addView(ui.button(year.toString(), year == selectedYear).apply {
-                setOnClickListener { onSelectYear(year) }
-            }, LinearLayout.LayoutParams(0, ui.dp(44), 1f).apply {
-                if (index > 0) marginStart = ui.dp(6)
-            })
-        }
-        ui.add(body, yearRow, bottom = 18)
+        val yearIndex = years.indexOf(selectedYear).coerceAtLeast(0)
+        val yearNavigation = ui.row()
+        yearNavigation.addView(ui.button("‹", false).apply {
+            contentDescription = "Año más reciente"
+            isEnabled = yearIndex > 0
+            setOnClickListener { years.getOrNull(yearIndex - 1)?.let(onSelectYear) }
+        }, LinearLayout.LayoutParams(ui.dp(52), ui.dp(48)))
+        yearNavigation.addView(ui.text(selectedYear.toString(), 25f, bold = true).apply {
+            gravity = Gravity.CENTER
+        }, LinearLayout.LayoutParams(0, ui.dp(48), 1f))
+        yearNavigation.addView(ui.button("›", false).apply {
+            contentDescription = "Año anterior"
+            isEnabled = yearIndex in 0 until years.lastIndex
+            setOnClickListener { years.getOrNull(yearIndex + 1)?.let(onSelectYear) }
+        }, LinearLayout.LayoutParams(ui.dp(52), ui.dp(48)))
+        ui.add(body, yearNavigation, bottom = 16)
 
         val months = RoutineArchivePresentation.months(catalog, selectedYear)
         val principalDocuments = months.mapNotNull { it.primary ?: it.routines.firstOrNull() }
@@ -52,35 +61,46 @@ class RoutineLibraryRenderer(private val ui: GymFitActivity) {
             LinearLayout.LayoutParams(0, ui.dp(92), 1f))
         ui.add(body, summary, bottom = 19)
 
-        ui.add(body, ui.text("Meses de $selectedYear", 19f, bold = true), bottom = 10)
-
-        months.forEach { group ->
-            val document = group.primary ?: group.routines.first()
-            val status = catalog.status(document)
-            val progress = RoutinePresentation.progress(document.plan, document.progress)
-            val panel = ui.col(16)
-            val heading = ui.row()
-            val title = ui.col()
-            ui.add(title, ui.text(RoutinePresentation.monthTitle(group.month), 18f, bold = true))
-            ui.add(title, ui.text(document.plan.calendar.values.firstOrNull()?.title
-                ?.takeIf(String::isNotBlank) ?: "Rutina mensual", 13f, ui.muted), 5)
-            heading.addView(title, LinearLayout.LayoutParams(0, -2, 1f))
-            heading.addView(statusChip(status))
-            ui.add(panel, heading)
-            ui.add(panel, ui.progressBar(progress.percent,
-                if (status == MonthlyRoutineStatus.ACTIVE) ui.orange else ui.red), 13)
-            val progressLine = ui.row()
-            progressLine.addView(ui.text("${progress.completedSessions} sesiones", 12f, ui.muted),
-                LinearLayout.LayoutParams(0, -2, 1f))
-            progressLine.addView(ui.text("${progress.percent}%", 13f, ui.ink, true))
-            ui.add(panel, progressLine, 7)
-            val otherCount = group.routines.count { it.id != document.id }
-            if (otherCount > 0) {
-                ui.add(panel, ui.text("↗  $otherCount ${if (otherCount == 1) "alternativa" else "alternativas"}",
-                    12f, ui.red, true), 9)
+        ui.add(body, ui.text("Calendario anual", 19f, bold = true), bottom = 4)
+        ui.add(body, ui.text("Selecciona un mes para consultar sus rutinas.", 13f, ui.muted), bottom = 12)
+        RoutineArchivePresentation.yearCalendar(catalog, selectedYear).chunked(3).forEach { quarter ->
+            val row = ui.row()
+            quarter.forEachIndexed { index, group ->
+                val document = group.primary ?: group.routines.firstOrNull()
+                val status = document?.let(catalog::status)
+                val sessionsInMonth = document?.workouts?.count { it.finishedAt.isNotBlank() } ?: 0
+                val panel = ui.col(12).apply { gravity = Gravity.CENTER }
+                val monthName = group.month.month.getDisplayName(TextStyle.SHORT, Locale("es", "ES"))
+                    .removeSuffix(".").replaceFirstChar { it.titlecase(Locale("es", "ES")) }
+                ui.add(panel, ui.text(monthName, 16f, if (document == null) ui.muted else ui.ink, true).apply {
+                    gravity = Gravity.CENTER
+                })
+                ui.add(panel, ui.text(if (document == null) "Sin rutina" else "$sessionsInMonth sesiones",
+                    11f, ui.muted).apply { gravity = Gravity.CENTER }, 7)
+                if (group.routines.size > 1) ui.add(panel, ui.text("${group.routines.size} rutinas", 10f, ui.red, true)
+                    .apply { gravity = Gravity.CENTER }, 5)
+                val fill = when (status) {
+                    MonthlyRoutineStatus.ACTIVE -> ui.getColor(R.color.selected_surface)
+                    MonthlyRoutineStatus.PROGRAMMED -> ui.getColor(R.color.orange_surface)
+                    MonthlyRoutineStatus.HISTORICAL -> ui.getColor(R.color.completed_surface)
+                    MonthlyRoutineStatus.ALTERNATIVE, null -> ui.cardSurface
+                }
+                val border = when (status) {
+                    MonthlyRoutineStatus.ACTIVE -> ui.red
+                    MonthlyRoutineStatus.PROGRAMMED -> ui.orange
+                    MonthlyRoutineStatus.HISTORICAL -> ui.green
+                    else -> ui.line
+                }
+                row.addView(ui.card(panel, fill, border).apply {
+                    isEnabled = document != null
+                    alpha = if (document == null) 0.58f else 1f
+                    contentDescription = "$monthName, ${if (document == null) "sin rutina" else "$sessionsInMonth sesiones"}"
+                    setOnClickListener { if (document != null) onOpenMonth(group.month) }
+                }, LinearLayout.LayoutParams(0, ui.dp(105), 1f).apply {
+                    if (index > 0) marginStart = ui.dp(7)
+                })
             }
-            val monthCard = ui.card(panel).apply { setOnClickListener { onOpenMonth(group.month) } }
-            ui.add(body, monthCard, bottom = 10)
+            ui.add(body, row, bottom = 8)
         }
     }
 
@@ -177,6 +197,9 @@ class RoutineLibraryRenderer(private val ui: GymFitActivity) {
         }
         val period = document.month
         val day = selectedDay.coerceIn(1, period.lengthOfMonth())
+        ui.add(body, ui.text("Calendario de planificación", 18f, bold = true), bottom = 4)
+        ui.add(body, ui.text("Selecciona un día para consultar el entrenamiento previsto.", 13f, ui.muted),
+            bottom = 12)
         val weekHeader = ui.row()
         listOf("L", "M", "X", "J", "V", "S", "D").forEach { name ->
             weekHeader.addView(ui.text(name, 12f, ui.muted, true).apply { gravity = Gravity.CENTER },

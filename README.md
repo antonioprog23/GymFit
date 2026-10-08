@@ -111,9 +111,10 @@ se recuperan datos antiguos. Los demás documentos permanecen intactos.
   cerrar la aplicación; ese estado provisional se elimina solo al finalizarla.
 - Una sesión finalizada queda en consulta; «Repetir entrenamiento» abre un registro
   nuevo sin modificar las realizaciones anteriores.
-- «Historial» agrupa las importaciones por año y mes y muestra planificación, progreso
-  y un calendario de realizaciones sin mezclar resultados. Cada día abre sus sesiones,
-  repeticiones o extras y permite consultar sus resultados completos sin editarlos.
+- «Historial» muestra cada año como un calendario de doce meses y permite avanzar entre
+  los años disponibles. Dentro de cada rutina, Planificación e Historial usan calendarios
+  diarios sin mezclar resultados. Cada día histórico abre sus sesiones, repeticiones o
+  extras y permite consultar sus resultados completos sin editarlos.
 - «Exportar rutina y resultados» permite elegir un solo documento activo o histórico.
   Nunca se combinan resultados de distintas importaciones en una exportación.
 - La migración solicita mes y año y conserva los resultados anteriores sin inventar

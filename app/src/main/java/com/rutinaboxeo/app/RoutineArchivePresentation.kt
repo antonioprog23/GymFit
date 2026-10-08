@@ -28,4 +28,13 @@ object RoutineArchivePresentation {
                     documents.sortedWith(compareByDescending<MonthlyRoutine> { it.id == snapshot.primary(month)?.id }
                         .thenByDescending { it.importedAt }))
             }
+
+    /** Construye las doce celdas del calendario anual, incluso para meses todavía vacíos. */
+    fun yearCalendar(snapshot: MonthlyRoutineSnapshot, year: Int): List<RoutineArchiveMonth> {
+        val stored = months(snapshot, year).associateBy { it.month }
+        return (1..12).map { month ->
+            val period = YearMonth.of(year, month)
+            stored[period] ?: RoutineArchiveMonth(period, null, emptyList())
+        }
+    }
 }
