@@ -254,6 +254,7 @@ class MainActivity : GymFitActivity() {
     /** Conserva la posición de ambas sesiones antes de recrear la actividad. */
     override fun onSaveInstanceState(outState: Bundle) {
         saveSessionFields()
+        saveSessionResumeState()
         outState.putString("page", page.name)
         outState.putBoolean("templateExport", templateExport)
         outState.putInt("selectedDateDay", selectedDateDay)
@@ -813,6 +814,7 @@ class MainActivity : GymFitActivity() {
     /** Abre una sesión ligada a un día real del mes. */
     private fun session(dayOfMonth: Int, documentId: String? = monthly.active()?.id, extra: Boolean = false) {
         saveSessionFields()
+        saveSessionResumeState()
         val target = documentId?.let(monthly::read) ?: return
         val requestedTarget = WorkoutTarget(target.id, extra)
         if (sessionTarget != requestedTarget) {
@@ -834,7 +836,11 @@ class MainActivity : GymFitActivity() {
             pauseSessionRest()
             sessionDateDay = dayOfMonth
             val items = plan.forDate(dayOfMonth)
-            sessionIndex = items.indexOfFirst { progress[it.key()]?.done != true }.takeIf { it >= 0 } ?: 0
+            val resumed = monthly.resumeState(target.id, dayOfMonth, extra)
+            sessionIndex = resumed?.exerciseIndex?.coerceIn(0, (items.size - 1).coerceAtLeast(0))
+                ?: items.indexOfFirst { progress[it.key()]?.done != true }.takeIf { it >= 0 } ?: 0
+            exerciseRuns.clear()
+            exerciseRuns.putAll(resumed?.exerciseRuns.orEmpty())
         }
         page = Page.SESSION
         drawNavigation()
@@ -1047,6 +1053,15 @@ class MainActivity : GymFitActivity() {
         if (owner != null) monthly.updateProgress(owner, progress) else RoutineStore.saveProgress(this, progress)
     }
 
+    /** Persiste la serie y el tiempo pendiente de la realización abierta para poder reanudarla. */
+    private fun saveSessionResumeState() {
+        val target = sessionTarget ?: return
+        val day = sessionDateDay ?: return
+        if (sessionReadOnly) return
+        monthly.updateResumeState(target.documentId, day, target.extra,
+            WorkoutResumeState(sessionIndex, exerciseRuns.toMutableMap()))
+    }
+
     /** Recupera la principal del mes después de consultar o ejecutar una sesión extra. */
     private fun restoreActiveDocument() {
         val active = monthly.active()
@@ -1065,6 +1080,7 @@ class MainActivity : GymFitActivity() {
         saveSessionFields()
         pauseSessionRest()
         sessionIndex = index
+        saveSessionResumeState()
         renderSession()
     }
 
@@ -1112,6 +1128,7 @@ class MainActivity : GymFitActivity() {
         when (run.phase) {
             ExercisePhase.READY -> {
                 exerciseRuns[item.key()] = ExerciseFlow.start(item)
+                saveSessionResumeState()
                 renderSession()
                 if (ExerciseTiming.workSeconds(item.reps) > 0) startSessionTimer(item)
             }
@@ -1136,6 +1153,7 @@ class MainActivity : GymFitActivity() {
             progress.getOrPut(item.key()) { ExerciseProgress() }.done = true
             saveVisibleProgress()
         }
+        saveSessionResumeState()
         renderSession()
         if (next.phase == ExercisePhase.REST ||
             (next.phase == ExercisePhase.WORK && ExerciseTiming.workSeconds(item.reps) > 0)) {
@@ -1176,6 +1194,7 @@ class MainActivity : GymFitActivity() {
         if (page == Page.SESSION) currentSessionItems().getOrNull(sessionIndex)?.let {
             updateSessionControls(it)
         }
+        saveSessionResumeState()
     }
     /** Finaliza una sesión y solicita confirmación si quedan ejercicios pendientes. */
     private fun finish(items: List<RoutineExercise>) {

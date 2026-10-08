@@ -110,7 +110,7 @@ class MonthlyRepository(
             workouts += WorkoutRecord(item.getString("id"), item.getInt("week"), item.getString("day"),
                 item.getString("startedAt"), item.getString("finishedAt"),
                 RoutineJson.decodeProgress(item.getJSONObject("results").toString()), item.getString("kind"),
-                item.optInt("dayOfMonth").takeIf { it > 0 })
+                item.optInt("dayOfMonth").takeIf { it > 0 }, decodeResumeState(item.optJSONObject("resumeState")))
         }
         return MonthlyRoutine(id, YearMonth.parse(root.getString("month")), root.getString("importedAt"),
             plan, RoutineJson.decodeProgress(root.getJSONObject("progress").toString()), workouts,
@@ -160,7 +160,8 @@ class MonthlyRepository(
                     .put("week", record.week).put("day", record.day).put("kind", record.kind)
                     .put("dayOfMonth", record.dayOfMonth ?: JSONObject.NULL)
                     .put("startedAt", record.startedAt).put("finishedAt", record.finishedAt)
-                    .put("results", JSONObject(RoutineJson.encodeProgress(record.results)))) }
+                    .put("results", JSONObject(RoutineJson.encodeProgress(record.results)))
+                    .put("resumeState", record.resumeState?.let(::encodeResumeState) ?: JSONObject.NULL)) }
             })
         writeAtomic(File(folder, "${document.id}.json"), root.toString(2))
     }
@@ -203,6 +204,26 @@ class MonthlyRepository(
 
     @Synchronized fun updateProgress(values: Map<String, ExerciseProgress>) {
         active()?.let { updateProgress(it.id, values) }
+    }
+
+    /** Recupera una copia del punto de reanudación de la realización mensual abierta. */
+    @Synchronized fun resumeState(id: String, dayOfMonth: Int, extra: Boolean = false): WorkoutResumeState? {
+        val kind = if (extra) "extra" else "tarde"
+        return read(id).workouts.lastOrNull {
+            it.dayOfMonth == dayOfMonth && it.kind == kind && it.finishedAt.isEmpty()
+        }?.resumeState?.copyState()
+    }
+
+    /** Guarda el punto de reanudación sin alterar resultados ni realizaciones finalizadas. */
+    @Synchronized fun updateResumeState(id: String, dayOfMonth: Int, extra: Boolean = false,
+        state: WorkoutResumeState) {
+        val document = read(id)
+        val kind = if (extra) "extra" else "tarde"
+        val pending = document.workouts.lastOrNull {
+            it.dayOfMonth == dayOfMonth && it.kind == kind && it.finishedAt.isEmpty()
+        } ?: return
+        pending.resumeState = state.copyState()
+        save(document)
     }
 
     /** Cierra una realización semanal heredada sin alterar las ya finalizadas. */
@@ -297,12 +318,43 @@ class MonthlyRepository(
     private fun copyResults(values: Map<String, ExerciseProgress>): MutableMap<String, ExerciseProgress> =
         values.mapValuesTo(mutableMapOf()) { it.value.copy() }
 
+    private fun WorkoutResumeState.copyState() = WorkoutResumeState(exerciseIndex,
+        exerciseRuns.mapValuesTo(mutableMapOf()) { it.value.copy() })
+
+    private fun encodeResumeState(state: WorkoutResumeState) = JSONObject()
+        .put("exerciseIndex", state.exerciseIndex)
+        .put("exerciseRuns", JSONObject().apply {
+            state.exerciseRuns.forEach { (key, run) -> put(key, JSONObject()
+                .put("phase", run.phase.name).put("round", run.round)
+                .put("remainingSeconds", run.remainingSeconds)) }
+        })
+
+    private fun decodeResumeState(value: JSONObject?): WorkoutResumeState? {
+        if (value == null) return null
+        val runs = mutableMapOf<String, ExerciseRun>()
+        val encodedRuns = value.optJSONObject("exerciseRuns") ?: JSONObject()
+        encodedRuns.keys().forEach { key ->
+            val run = encodedRuns.optJSONObject(key) ?: return@forEach
+            runs[key] = ExerciseRun(
+                phase = run.optString("phase").let { name ->
+                    runCatching { ExercisePhase.valueOf(name) }.getOrDefault(ExercisePhase.READY)
+                },
+                round = run.optInt("round", 1).coerceAtLeast(1),
+                remainingSeconds = run.optInt("remainingSeconds", 0).coerceAtLeast(0)
+            )
+        }
+        return WorkoutResumeState(value.optInt("exerciseIndex", 0).coerceAtLeast(0), runs)
+    }
+
     private fun beginWorkout(document: MonthlyRoutine, items: List<RoutineExercise>, week: Int, day: String,
         dayOfMonth: Int?, repeat: Boolean, kind: String, matches: (WorkoutRecord) -> Boolean) {
         if (items.isEmpty()) return
         val pending = document.workouts.lastOrNull { it.kind == kind && it.finishedAt.isEmpty() && matches(it) }
         if (pending != null && !repeat) return
-        if (repeat) pending?.finishedAt = now()
+        if (repeat) pending?.apply {
+            finishedAt = now()
+            resumeState = null
+        }
         val record = WorkoutRecord(UUID.randomUUID().toString(), week, day, now(),
             dayOfMonth = dayOfMonth, kind = kind)
         items.forEach { item ->
@@ -318,7 +370,10 @@ class MonthlyRepository(
     private fun finishWorkout(document: MonthlyRoutine, matches: (WorkoutRecord) -> Boolean) {
         document.workouts.lastOrNull {
             it.kind in setOf("tarde", "extra") && it.finishedAt.isEmpty() && matches(it)
-        }?.finishedAt = now()
+        }?.apply {
+            finishedAt = now()
+            resumeState = null
+        }
         save(document)
     }
 

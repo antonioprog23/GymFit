@@ -127,6 +127,49 @@ class MonthlyRepositoryTest {
         assertTrue(runCatching { repository.beginDate(31) }.isFailure)
     }
 
+    /** El ejercicio, la serie y el tiempo pendiente sobreviven al reinicio y desaparecen al finalizar. */
+    @Test fun monthlyWorkoutPersistsResumeStateUntilFinished() {
+        val folder = temporary.newFolder()
+        val period = YearMonth.of(2026, 9)
+        val exercise = RoutineExercise(1, "Martes", "Fuerza", "Remo", "3", "10", "60 s", dayOfMonth = 1)
+        val monthlyPlan = RoutinePlan(listOf(exercise), month = period,
+            calendar = mapOf(1 to CalendarDay(1, "Entrenamiento", "Torso")))
+        val repository = MonthlyRepository(folder) { period }
+        val document = repository.create(monthlyPlan, period)
+        repository.beginDate(document.id, 1)
+        val expected = WorkoutResumeState(0, mutableMapOf(exercise.key() to
+            ExerciseRun(ExercisePhase.REST, 2, 34)))
+
+        repository.updateResumeState(document.id, 1, state = expected)
+
+        assertEquals(expected, MonthlyRepository(folder) { period }.resumeState(document.id, 1))
+        repository.finishDate(document.id, 1)
+        assertNull(repository.resumeState(document.id, 1))
+    }
+
+    /** Repetir conserva el resultado anterior y empieza con un estado de ejecución independiente. */
+    @Test fun repeatedWorkoutDoesNotReusePreviousResumeState() {
+        val period = YearMonth.of(2026, 9)
+        val repository = MonthlyRepository(temporary.newFolder()) { period }
+        val exercise = RoutineExercise(1, "Martes", "Fuerza", "Remo", "3", "10", "60 s", dayOfMonth = 1)
+        val monthlyPlan = RoutinePlan(listOf(exercise), month = period,
+            calendar = mapOf(1 to CalendarDay(1, "Entrenamiento", "Torso")))
+        val document = repository.create(monthlyPlan, period)
+        repository.beginDate(document.id, 1)
+        repository.updateProgress(document.id,
+            mapOf(exercise.key() to ExerciseProgress(weight = "20", done = true)))
+        repository.updateResumeState(document.id, 1, state = WorkoutResumeState(0,
+            mutableMapOf(exercise.key() to ExerciseRun(ExercisePhase.REST, 2, 34))))
+        repository.finishDate(document.id, 1)
+        repository.beginDate(document.id, 1, repeat = true)
+
+        val records = repository.read(document.id).workouts
+        assertEquals("20", records.first().results.values.single().weight)
+        assertNull(records.first().resumeState)
+        assertNull(records.last().resumeState)
+        assertEquals("", records.last().results.values.single().weight)
+    }
+
     /** Los datos heredados conservan notas y resultados con fecha desconocida. */
     @Test fun migrationPreservesUndatedResults() {
         val repository = MonthlyRepository(temporary.newFolder()) { YearMonth.of(2026, 8) }
@@ -149,7 +192,10 @@ class MonthlyRepositoryTest {
         val file = File(folder, "${saved.id}.json")
         val root = JSONObject(file.readText()).put("schemaVersion", 2)
         val workouts = root.getJSONArray("workouts")
-        for (index in 0 until workouts.length()) workouts.getJSONObject(index).remove("dayOfMonth")
+        for (index in 0 until workouts.length()) workouts.getJSONObject(index).apply {
+            remove("dayOfMonth")
+            remove("resumeState")
+        }
         file.writeText(root.toString(2))
 
         val restored = MonthlyRepository(folder) { YearMonth.of(2026, 8) }.read(saved.id)

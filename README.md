@@ -105,6 +105,8 @@ se recuperan datos antiguos. Los demás documentos permanecen intactos.
 - Los JSON de esquema 2 continúan leyéndose como histórico. Conservan semana y día,
   se pueden consultar y exportar, pero no vuelven a habilitar entrenamientos semanales.
 - Los campos se guardan tras 400 ms sin escribir y al cambiar de pantalla o salir.
+- Una sesión pendiente conserva ejercicio, serie, fase y tiempo restante al navegar o
+  cerrar la aplicación; ese estado provisional se elimina solo al finalizarla.
 - Una sesión finalizada queda en consulta; «Repetir entrenamiento» abre un registro
   nuevo sin modificar las realizaciones anteriores.
 - «Historial» agrupa las importaciones por año y mes y muestra planificación, progreso
