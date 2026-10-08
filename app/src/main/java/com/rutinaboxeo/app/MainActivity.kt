@@ -61,6 +61,8 @@ class MainActivity : GymFitActivity() {
     private val autosave = Runnable { saveSessionFields() }
     /** Día seleccionado en los planes organizados por fechas mensuales. */
     private var selectedDateDay = 1
+    /** Día seleccionado dentro del calendario histórico del documento consultado. */
+    private var selectedHistoryDay: Int? = null
     /** Documento consultado desde el histórico mensual. */
     private var selectedRoutineId: String? = null
     /** Período abierto dentro del histórico mensual. */
@@ -192,6 +194,7 @@ class MainActivity : GymFitActivity() {
             templateExport = savedInstanceState.getBoolean("templateExport")
             selectedDateDay = savedInstanceState.getInt("selectedDateDay", selectedDateDay)
                 .coerceIn(1, plan.month?.lengthOfMonth() ?: 1)
+            selectedHistoryDay = savedInstanceState.getInt("selectedHistoryDay", 0).takeIf { it > 0 }
             if (plan.morningSteps.isNotEmpty()) {
                 morningIndex = savedInstanceState.getInt("morningIndex", 0)
                     .coerceIn(plan.morningSteps.indices)
@@ -258,6 +261,7 @@ class MainActivity : GymFitActivity() {
         outState.putString("page", page.name)
         outState.putBoolean("templateExport", templateExport)
         outState.putInt("selectedDateDay", selectedDateDay)
+        outState.putInt("selectedHistoryDay", selectedHistoryDay ?: 0)
         outState.putInt("morningIndex", morningIndex)
         outState.putInt("morningRemaining", morningRemaining)
         outState.putBoolean("morningStarted", morningStarted)
@@ -861,7 +865,7 @@ class MainActivity : GymFitActivity() {
         val monthlyInfo = sessionDateDay?.let(plan::calendarDay)
         val title = monthlyInfo?.title ?: "Entrenamiento"
         val subtitle = sessionDateDay?.let { selected -> plan.month?.atDay(selected)?.let(RoutinePresentation::fullDate) }.orEmpty()
-        header(body, "Ejercicio ${sessionIndex + 1} de ${items.size.coerceAtLeast(1)}", subtitle,
+        header(body, title, subtitle,
             backTo = if (sessionTarget?.extra == true) Page.ROUTINE_DETAIL else Page.ROUTINE)
         if (items.isEmpty()) {
             add(body, text("No hay ejercicios para esta sesión.", 15f, muted))
@@ -870,11 +874,17 @@ class MainActivity : GymFitActivity() {
         val item = items[sessionIndex]
         exerciseRuns.getOrPut(item.key()) { ExerciseRun() }
         val completed = items.count { progress[it.key()]?.done == true }
-        val summary = col(14)
-        add(summary, text("$completed de ${items.size} ejercicios hechos", 15f, bold = true))
+        val summary = col(15)
+        val summaryHeading = row()
+        summaryHeading.addView(text("Ejercicio ${sessionIndex + 1} de ${items.size}", 15f, bold = true),
+            LinearLayout.LayoutParams(0, -2, 1f))
+        summaryHeading.addView(text("${completed * 100 / items.size.coerceAtLeast(1)}%", 15f, red, true))
+        add(summary, summaryHeading)
+        add(summary, progressBar(completed * 100 / items.size.coerceAtLeast(1), red, 7), 11)
+        add(summary, text("$completed de ${items.size} ejercicios completados", 12f, muted), 8)
         val focus = monthlyInfo?.focus.orEmpty()
         if (focus.isNotBlank()) add(summary, text(focus, 13f, muted), 5)
-        add(body, card(summary, pale, pale), bottom = 13)
+        add(body, card(summary), bottom = 13)
         if (sessionReadOnly) {
             add(body, text("Entrenamiento finalizado. Sus resultados se conservan en el historial.", 14f, green), bottom = 10)
             add(body, button("Repetir entrenamiento").apply { setOnClickListener {
@@ -902,14 +912,28 @@ class MainActivity : GymFitActivity() {
             ExercisePhase.REST -> run.round
             ExercisePhase.DONE -> setCount
         }
+        add(panel, text("Serie ${(completedSets + 1).coerceAtMost(setCount)} de $setCount", 14f, bold = true), 14)
         val segments = row()
         repeat(setCount) { index ->
-            segments.addView(View(this).apply {
-                background = box(if (index < completedSets) red else line, 5)
-            }, LinearLayout.LayoutParams(0, dp(8), 1f).apply { if (index > 0) marginStart = dp(5) })
+            val finished = index < completedSets
+            val active = !finished && index + 1 == run.round && run.phase != ExercisePhase.DONE
+            val fill = when {
+                finished -> getColor(R.color.completed_surface)
+                active -> getColor(R.color.selected_surface)
+                else -> pale
+            }
+            val border = when {
+                finished -> green
+                active -> red
+                else -> line
+            }
+            segments.addView(text(if (finished) "✓" else "${index + 1}", 14f,
+                when { finished -> green; active -> red; else -> muted }, true).apply {
+                gravity = Gravity.CENTER
+                background = box(fill, 12, border)
+            }, LinearLayout.LayoutParams(0, dp(46), 1f).apply { if (index > 0) marginStart = dp(6) })
         }
-        add(panel, segments, 13)
-        add(panel, text("Serie ${(completedSets + 1).coerceAtMost(setCount)} de $setCount", 13f, muted), 7)
+        add(panel, segments, 9)
         add(panel, text(ExerciseGuide.forExercise(item), 14f, muted), 11)
         addVideoButton(panel, item.videoUrl, item.exercise)
         val sets = setCount
@@ -947,6 +971,7 @@ class MainActivity : GymFitActivity() {
         val trackNumbers = item.block.lowercase(Locale.ROOT) in TRACKABLE_BLOCKS
         val current = progress.getOrPut(item.key()) { ExerciseProgress() }
         val editors = mutableListOf<EditText>()
+        add(panel, sectionTitle("TU REGISTRO"), top = 14, bottom = 8)
         if (trackNumbers) {
             val numbers = row()
             listOf(
@@ -981,6 +1006,20 @@ class MainActivity : GymFitActivity() {
         updateSessionControls(item)
         if (sessionReadOnly) sessionAction?.isEnabled = false
 
+        val sessionDocument = sessionTarget?.documentId?.let { id -> runCatching { monthly.read(id) }.getOrNull() }
+        sessionDocument?.let { document -> RoutinePresentation.bestResult(document, item.key()) }?.let { best ->
+            val bestPanel = col(15)
+            val bestHeading = row()
+            bestHeading.addView(text("Tu mejor marca", 16f, bold = true), LinearLayout.LayoutParams(0, -2, 1f))
+            bestHeading.addView(text(best.dateLabel, 12f, muted))
+            add(bestPanel, bestHeading)
+            val values = listOfNotNull("${best.weight} kg",
+                best.reps.takeIf(String::isNotBlank)?.let { "$it reps" },
+                best.rir.takeIf(String::isNotBlank)?.let { "RIR $it" }).joinToString(" · ")
+            add(bestPanel, text(values, 20f, green, true), 9)
+            add(body, card(bestPanel, getColor(R.color.completed_surface), green), bottom = 12)
+        }
+
         val controls = row()
         controls.addView(button("‹  Anterior", false).apply {
             isEnabled = sessionIndex > 0
@@ -994,11 +1033,7 @@ class MainActivity : GymFitActivity() {
         }, LinearLayout.LayoutParams(0, dp(46), 1f))
         add(body, controls, bottom = 17)
 
-        val railLabels = row()
-        railLabels.addView(text("Anterior", 11f, muted), LinearLayout.LayoutParams(0, -2, 1f))
-        railLabels.addView(text("Siguiente", 11f, muted).apply { gravity = Gravity.END },
-            LinearLayout.LayoutParams(0, -2, 1f))
-        add(body, railLabels, bottom = 8)
+        add(body, sectionTitle("EJERCICIOS DE LA SESIÓN"), bottom = 8)
         val rail = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         items.forEachIndexed { index, listed ->
             val done = progress[listed.key()]?.done == true
@@ -1304,6 +1339,35 @@ class MainActivity : GymFitActivity() {
             .setPositiveButton("Cerrar", null).show()
     }
 
+    /** Muestra una realización histórica completa sin permitir modificar sus resultados. */
+    private fun showWorkoutRecord(document: MonthlyRoutine, record: WorkoutRecord) {
+        val body = col(16)
+        val timing = RoutinePresentation.workoutTime(record)
+        val pending = record.finishedAt.isBlank()
+        add(body, chip(if (pending) "Pendiente" else "Finalizada", if (pending) orange else green,
+            getColor(if (pending) R.color.orange_surface else R.color.completed_surface)), bottom = 10)
+        add(body, text(listOfNotNull(timing.range, timing.duration).joinToString(" · "), 13f, muted), bottom = 13)
+        record.results.forEach { (key, result) ->
+            val exerciseItem = document.plan.exercises.firstOrNull { it.key() == key }
+            val panel = col(13)
+            add(panel, text(exerciseItem?.exercise ?: key, 15f, bold = true))
+            exerciseItem?.let { add(panel, text("${it.series} × ${it.reps}", 12f, muted), 5) }
+            val values = listOfNotNull(
+                result.weight.takeIf(String::isNotBlank)?.let { "$it kg" },
+                result.actualReps.takeIf(String::isNotBlank)?.let { "$it reps" },
+                result.rir.takeIf(String::isNotBlank)?.let { "RIR $it" }
+            ).joinToString(" · ")
+            if (values.isNotBlank()) add(panel, text(values, 13f, if (result.done) green else ink, true), 7)
+            if (result.userNote.isNotBlank()) add(panel, text(result.userNote, 12f, muted), 6)
+            add(body, card(panel, if (result.done) getColor(R.color.completed_surface) else cardSurface), bottom = 8)
+        }
+        AlertDialog.Builder(this)
+            .setTitle(RoutinePresentation.workoutLocation(document.month, record))
+            .setView(ScrollView(this).apply { addView(body) })
+            .setPositiveButton("Cerrar", null)
+            .show()
+    }
+
     /** Dibuja el centro de importación o exportación de la plantilla. */
     private fun templatePage() {
         val body = scrollPage()
@@ -1550,6 +1614,7 @@ class MainActivity : GymFitActivity() {
             selectedRoutineId = document.id
             detailTab = DetailTab.PLAN
             selectedDateDay = RoutinePresentation.initialDay(document.plan)
+            selectedHistoryDay = RoutinePresentation.initialHistoryDay(document)
             showPage(Page.ROUTINE_DETAIL)
         }
     }
@@ -1589,7 +1654,13 @@ class MainActivity : GymFitActivity() {
                     textSize = 12f
                     letterSpacing = 0f
                     setPadding(dp(3), 0, dp(3), 0)
-                    setOnClickListener { detailTab = tab; routineDetailPage() }
+                    setOnClickListener {
+                        detailTab = tab
+                        if (tab == DetailTab.HISTORY && selectedHistoryDay == null) {
+                            selectedHistoryDay = RoutinePresentation.initialHistoryDay(document)
+                        }
+                        routineDetailPage()
+                    }
                 }, LinearLayout.LayoutParams(0, dp(43), 1f).apply { if (index > 0) marginStart = dp(5) })
             }
         add(body, tabs, bottom = 14)
@@ -1598,7 +1669,9 @@ class MainActivity : GymFitActivity() {
                 onSelectDay = { selectedDateDay = it; routineDetailPage() },
                 onExtraSession = { session(it, document.id, extra = true) })
             DetailTab.PROGRESS -> routineLibrary.progress(body, document)
-            DetailTab.HISTORY -> routineLibrary.history(body, document)
+            DetailTab.HISTORY -> routineLibrary.history(body, document, selectedHistoryDay,
+                onSelectDay = { selectedHistoryDay = it; routineDetailPage() },
+                onOpenWorkout = { showWorkoutRecord(document, it) })
         }
         if (!isPrimary) {
             add(body, button("Marcar como principal de este mes", false).apply { setOnClickListener {

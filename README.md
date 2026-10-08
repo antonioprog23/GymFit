@@ -30,10 +30,12 @@ se guarda en preferencias privadas y se recupera al abrir la aplicación; inicia
 se utiliza el tema del dispositivo. El cambio conserva la pantalla, los campos y las
 series registradas, y pausa los temporizadores manteniendo el tiempo restante.
 
-La interfaz utiliza una composición bento clara y reconocible en ambos temas: azul para
-acciones y selección, naranja para recuperación y rutinas alternativas, y verde para
-estados completados. `Rutina` organiza la planificación como mes, día y sesión guiada;
-`Historial` navega desde el año al mes y después al documento principal o alternativo.
+La interfaz utiliza una composición bento clara y reconocible en ambos temas: carmesí
+para acciones y selección, naranja para recuperación, pendientes y rutinas alternativas,
+y verde para estados completados. El tema claro combina fondos cálidos con tarjetas
+blancas; el oscuro utiliza superficies carbón sin dominante azul. `Rutina` organiza la
+planificación como mes, día y sesión guiada; `Historial` navega desde el año al mes y
+después al documento principal o alternativo.
 
 ## Estructura de Excel
 
@@ -110,7 +112,8 @@ se recuperan datos antiguos. Los demás documentos permanecen intactos.
 - Una sesión finalizada queda en consulta; «Repetir entrenamiento» abre un registro
   nuevo sin modificar las realizaciones anteriores.
 - «Historial» agrupa las importaciones por año y mes y muestra planificación, progreso
-  e historial sin mezclar resultados.
+  y un calendario de realizaciones sin mezclar resultados. Cada día abre sus sesiones,
+  repeticiones o extras y permite consultar sus resultados completos sin editarlos.
 - «Exportar rutina y resultados» permite elegir un solo documento activo o histórico.
   Nunca se combinan resultados de distintas importaciones en una exportación.
 - La migración solicita mes y año y conserva los resultados anteriores sin inventar

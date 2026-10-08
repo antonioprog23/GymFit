@@ -1,5 +1,6 @@
 package com.rutinaboxeo.app
 
+import java.time.Duration
 import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.time.YearMonth
@@ -37,12 +38,25 @@ data class ExerciseWeightEntry(
     val startedAt: String
 )
 
+/** Realizaciones de una fecha mensual preparadas para el calendario histórico. */
+data class RoutineHistoryDay(val day: Int, val workouts: List<WorkoutRecord>) {
+    val completed: Int get() = workouts.count { it.finishedAt.isNotBlank() }
+    val pending: Int get() = workouts.size - completed
+}
+
+/** Mejor carga finalizada de un ejercicio, sin incluir la sesión todavía abierta. */
+data class ExerciseBestResult(val weight: String, val reps: String, val rir: String, val dateLabel: String)
+
+/** Horario legible de una realización y duración cuando ya ha finalizado. */
+data class WorkoutTimeSummary(val range: String, val duration: String?)
+
 /** Prepara fechas y agregados sin depender de Android ni de las vistas. */
 object RoutinePresentation {
     private val locale = Locale("es", "ES")
     private val fullDate = DateTimeFormatter.ofPattern("EEEE, d 'de' MMMM", locale)
     private val dayMonth = DateTimeFormatter.ofPattern("d 'de' MMMM", locale)
     private val shortDate = DateTimeFormatter.ofPattern("d MMM", locale)
+    private val time = DateTimeFormatter.ofPattern("HH:mm", locale)
 
     /** Día inicial del calendario: hoy si pertenece al plan y, en otro caso, el primero. */
     fun initialDay(plan: RoutinePlan, today: LocalDate = LocalDate.now()): Int {
@@ -56,6 +70,50 @@ object RoutinePresentation {
         val days = (1..month.lengthOfMonth()).map<Int, Int?> { it }
         val cells = leading + days
         return (cells + List((7 - cells.size % 7) % 7) { null }).chunked(7)
+    }
+
+    /** Agrupa las realizaciones fechadas sin mezclar días ni inventar fechas antiguas. */
+    fun historyDays(document: MonthlyRoutine): List<RoutineHistoryDay> = document.workouts
+        .filter { it.dayOfMonth in 1..document.month.lengthOfMonth() }
+        .groupBy { requireNotNull(it.dayOfMonth) }
+        .toSortedMap()
+        .map { (day, workouts) -> RoutineHistoryDay(day, workouts.sortedByDescending { it.startedAt }) }
+
+    /** Selecciona de inicio el último día registrado del documento. */
+    fun initialHistoryDay(document: MonthlyRoutine): Int? = document.workouts
+        .filter { it.dayOfMonth in 1..document.month.lengthOfMonth() }
+        .maxByOrNull { it.startedAt }
+        ?.dayOfMonth
+
+    /** Calcula la mejor carga histórica válida de un ejercicio. */
+    fun bestResult(document: MonthlyRoutine, exerciseKey: String): ExerciseBestResult? = document.workouts
+        .asSequence()
+        .filter { it.finishedAt.isNotBlank() }
+        .mapNotNull { record ->
+            val result = record.results[exerciseKey] ?: return@mapNotNull null
+            result.weight.trim().replace(',', '.').toDoubleOrNull()
+                ?.let { weight -> Triple(record, result, weight) }
+        }
+        .maxByOrNull { it.third }
+        ?.let { (record, result) -> ExerciseBestResult(result.weight, result.actualReps, result.rir,
+            workoutDate(record.startedAt)) }
+
+    /** Convierte las marcas temporales ISO en hora y duración fáciles de consultar. */
+    fun workoutTime(record: WorkoutRecord): WorkoutTimeSummary {
+        val start = runCatching { OffsetDateTime.parse(record.startedAt) }.getOrNull()
+        val finish = runCatching { OffsetDateTime.parse(record.finishedAt) }.getOrNull()
+        val range = when {
+            start == null -> "Hora desconocida"
+            finish == null -> "${start.format(time)} · en curso"
+            else -> "${start.format(time)}–${finish.format(time)}"
+        }
+        val duration = if (start != null && finish != null) Duration.between(start, finish)
+            .takeIf { !it.isNegative }
+            ?.let { value ->
+                val minutes = value.toMinutes()
+                if (minutes < 60) "$minutes min" else "${minutes / 60} h ${minutes % 60} min"
+            } else null
+        return WorkoutTimeSummary(range, duration)
     }
 
     /** Resume el plan mensual o el histórico semanal antiguo mediante el mismo contrato. */

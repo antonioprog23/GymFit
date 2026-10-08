@@ -1,20 +1,20 @@
 <resources>
     <color name="card_surface">#FFFFFF</color>
-    <color name="selected_surface">#EAF2FF</color>
-    <color name="completed_surface">#EAF8F1</color>
-    <color name="badge_surface">#EAF2FF</color>
-    <color name="strong_border">#9EB5CF</color>
+    <color name="selected_surface">#FDECEA</color>
+    <color name="completed_surface">#E7F5ED</color>
+    <color name="badge_surface">#FDECEA</color>
+    <color name="strong_border">#ADAAA5</color>
     <color name="on_accent">#FFFFFF</color>
-    <color name="navy">#111D35</color>
-    <color name="brand_red">#1769E8</color>
-    <color name="surface">#FAF8F3</color>
-    <color name="surface_muted">#F1F2F0</color>
-    <color name="divider">#E4E1DA</color>
+    <color name="navy">#191C20</color>
+    <color name="brand_red">#B42318</color>
+    <color name="surface">#F7F5F2</color>
+    <color name="surface_muted">#EEEAE4</color>
+    <color name="divider">#DED9D2</color>
     <color name="white">#FFFFFF</color>
-    <color name="text_primary">#111D35</color>
-    <color name="text_secondary">#5B687B</color>
-    <color name="green">#14945E</color>
-    <color name="orange">#E76F24</color>
-    <color name="orange_surface">#FFF1E8</color>
-    <color name="danger">#D92D20</color>
+    <color name="text_primary">#191C20</color>
+    <color name="text_secondary">#60656D</color>
+    <color name="green">#157347</color>
+    <color name="orange">#C45D0A</color>
+    <color name="orange_surface">#FFF0E3</color>
+    <color name="danger">#B3261E</color>
 </resources>

@@ -16,6 +16,47 @@ class RoutinePresentationTest {
         assertTrue(rows.all { it.size == 7 })
     }
 
+    /** El histórico mensual agrupa repeticiones por día y selecciona la más reciente. */
+    @Test fun historyCalendarGroupsWorkoutsByDay() {
+        val period = YearMonth.of(2026, 10)
+        val exercise = RoutineExercise(1, "Jueves", "Fuerza", "Remo", "3", "10", "60 s", dayOfMonth = 8)
+        val document = MonthlyRoutine("10_2026", period, "2026-10-01", RoutinePlan(listOf(exercise), month = period,
+            calendar = (1..31).associateWith { CalendarDay(it, "Entrenamiento", "Día $it") }))
+        document.workouts += WorkoutRecord("one", 2, "Jueves", "2026-10-08T18:00:00+02:00",
+            "2026-10-08T19:00:00+02:00", dayOfMonth = 8)
+        document.workouts += WorkoutRecord("two", 2, "Jueves", "2026-10-08T20:00:00+02:00",
+            dayOfMonth = 8)
+        document.workouts += WorkoutRecord("three", 2, "Viernes", "2026-10-09T18:00:00+02:00",
+            "2026-10-09T18:45:00+02:00", dayOfMonth = 9)
+
+        val days = RoutinePresentation.historyDays(document)
+
+        assertEquals(listOf(8, 9), days.map { it.day })
+        assertEquals(1, days.first().completed)
+        assertEquals(1, days.first().pending)
+        assertEquals(9, RoutinePresentation.initialHistoryDay(document))
+        assertEquals("18:00–18:45", RoutinePresentation.workoutTime(document.workouts.last()).range)
+        assertEquals("45 min", RoutinePresentation.workoutTime(document.workouts.last()).duration)
+    }
+
+    /** La mejor marca solo considera realizaciones finalizadas y acepta decimales con coma. */
+    @Test fun bestResultUsesFinishedWorkoutWithHighestWeight() {
+        val period = YearMonth.of(2026, 10)
+        val exercise = RoutineExercise(1, "Jueves", "Fuerza", "Remo", "3", "10", "60 s", dayOfMonth = 8)
+        val document = MonthlyRoutine("10_2026", period, "2026-10-01", RoutinePlan(listOf(exercise), month = period))
+        document.workouts += WorkoutRecord("one", 2, "Jueves", "2026-10-08T18:00:00+02:00",
+            "2026-10-08T19:00:00+02:00", mutableMapOf(exercise.key() to
+                ExerciseProgress(weight = "82,5", actualReps = "10", rir = "2")), dayOfMonth = 8)
+        document.workouts += WorkoutRecord("pending", 2, "Jueves", "2026-10-08T20:00:00+02:00",
+            results = mutableMapOf(exercise.key() to ExerciseProgress(weight = "100")), dayOfMonth = 8)
+
+        val best = requireNotNull(RoutinePresentation.bestResult(document, exercise.key()))
+
+        assertEquals("82,5", best.weight)
+        assertEquals("10", best.reps)
+        assertEquals("2", best.rir)
+    }
+
     @Test fun initialDayUsesTodayOnlyInsideThePlanMonth() {
         val plan = monthlyPlan(31)
         assertEquals(12, RoutinePresentation.initialDay(plan, LocalDate.of(2026, 10, 12)))

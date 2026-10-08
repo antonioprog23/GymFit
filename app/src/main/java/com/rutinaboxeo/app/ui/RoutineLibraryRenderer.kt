@@ -2,6 +2,7 @@ package com.rutinaboxeo.app.ui
 
 import android.view.Gravity
 import android.view.View
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import com.rutinaboxeo.app.MonthlyRoutine
 import com.rutinaboxeo.app.MonthlyRoutineSnapshot
@@ -9,6 +10,7 @@ import com.rutinaboxeo.app.MonthlyRoutineStatus
 import com.rutinaboxeo.app.R
 import com.rutinaboxeo.app.RoutineArchivePresentation
 import com.rutinaboxeo.app.RoutinePresentation
+import com.rutinaboxeo.app.WorkoutRecord
 import java.time.YearMonth
 
 /** Renderiza la biblioteca mensual sin asumir navegación ni modificar persistencia. */
@@ -241,24 +243,124 @@ class RoutineLibraryRenderer(private val ui: GymFitActivity) {
         ui.add(body, ui.text("Este progreso pertenece únicamente a esta rutina.", 13f, ui.muted), top = 10)
     }
 
-    fun history(body: LinearLayout, document: MonthlyRoutine) {
+    fun history(body: LinearLayout, document: MonthlyRoutine, selectedDay: Int?,
+        onSelectDay: (Int) -> Unit, onOpenWorkout: (WorkoutRecord) -> Unit) {
         if (document.workouts.isEmpty()) {
             ui.add(body, ui.text("Aún no hay entrenamientos registrados.", 14f, ui.muted)); return
         }
-        document.workouts.asReversed().forEach { record ->
+        val historyDays = RoutinePresentation.historyDays(document)
+        if (historyDays.isNotEmpty()) {
+            val chosenDay = selectedDay?.takeIf { day -> historyDays.any { it.day == day } }
+                ?: RoutinePresentation.initialHistoryDay(document) ?: historyDays.last().day
+            val byDay = historyDays.associateBy { it.day }
+            ui.add(body, ui.text("Sesiones realizadas", 18f, bold = true), bottom = 4)
+            ui.add(body, ui.text("Selecciona un día para consultar sus realizaciones.", 13f, ui.muted), bottom = 13)
+            val weekHeader = ui.row()
+            listOf("L", "M", "X", "J", "V", "S", "D").forEach { name ->
+                weekHeader.addView(ui.text(name, 12f, ui.muted, true).apply { gravity = Gravity.CENTER },
+                    LinearLayout.LayoutParams(0, ui.dp(28), 1f))
+            }
+            ui.add(body, weekHeader, bottom = 3)
+            RoutinePresentation.calendarRows(document.month).forEach { week ->
+                val line = ui.row()
+                week.forEach { day ->
+                    if (day == null) line.addView(View(ui), LinearLayout.LayoutParams(0, ui.dp(50), 1f))
+                    else {
+                        val history = byDay[day]
+                        val selected = day == chosenDay
+                        val pending = history?.pending?.let { it > 0 } == true
+                        val cell = FrameLayout(ui).apply {
+                            val fill = when {
+                                selected -> ui.red
+                                pending -> ui.getColor(R.color.orange_surface)
+                                history != null -> ui.getColor(R.color.completed_surface)
+                                else -> ui.cardSurface
+                            }
+                            val border = when {
+                                selected -> ui.red
+                                pending -> ui.orange
+                                history != null -> ui.green
+                                else -> ui.line
+                            }
+                            background = ui.box(fill, 14, border)
+                            addView(ui.text(day.toString(), 13f,
+                                if (selected) ui.getColor(R.color.on_accent) else ui.ink, selected).apply {
+                                gravity = Gravity.CENTER
+                            }, FrameLayout.LayoutParams(-1, -1))
+                            if ((history?.workouts?.size ?: 0) > 1) addView(ui.text("×${history!!.workouts.size}",
+                                9f, if (selected) ui.getColor(R.color.on_accent) else ui.red, true).apply {
+                                gravity = Gravity.CENTER
+                            }, FrameLayout.LayoutParams(ui.dp(24), ui.dp(17), Gravity.TOP or Gravity.END))
+                            isEnabled = history != null
+                            alpha = if (history == null) 0.55f else 1f
+                            contentDescription = when {
+                                history == null -> "$day, sin sesiones"
+                                pending -> "$day, ${history.workouts.size} sesiones, pendiente"
+                                else -> "$day, ${history.workouts.size} sesiones completadas"
+                            }
+                            setOnClickListener { if (history != null) onSelectDay(day) }
+                        }
+                        line.addView(cell, LinearLayout.LayoutParams(0, ui.dp(47), 1f).apply {
+                            marginEnd = ui.dp(3); bottomMargin = ui.dp(3)
+                        })
+                    }
+                }
+                ui.add(body, line)
+            }
+            val legend = ui.row()
+            listOf("●" to "Finalizada" to ui.green, "●" to "Pendiente" to ui.orange,
+                "×2" to "Repeticiones" to ui.red).forEachIndexed { index, pair ->
+                val (symbolAndLabel, color) = pair
+                val (symbol, label) = symbolAndLabel
+                legend.addView(ui.row().apply {
+                    gravity = Gravity.CENTER
+                    addView(ui.text(symbol, 12f, color, true))
+                    addView(ui.text(label, 10f, ui.muted), LinearLayout.LayoutParams(-2, -2).apply {
+                        marginStart = ui.dp(4)
+                    })
+                }, LinearLayout.LayoutParams(0, ui.dp(36), 1f).apply { if (index > 0) marginStart = ui.dp(3) })
+            }
+            ui.add(body, legend, top = 6, bottom = 12)
+
+            val selected = byDay.getValue(chosenDay)
+            ui.add(body, ui.text(RoutinePresentation.fullDate(document.month.atDay(chosenDay)), 19f, bold = true),
+                bottom = 9)
+            selected.workouts.forEach { record ->
+                val completed = record.results.values.count { it.done }
+                val timing = RoutinePresentation.workoutTime(record)
+                val panel = ui.col(14)
+                val heading = ui.row()
+                val repetition = selected.workouts.sortedBy { it.startedAt }.indexOfFirst { it.id == record.id }
+                val label = when {
+                    record.kind == "extra" -> "Sesión extra"
+                    repetition > 0 -> "Repetición $repetition"
+                    else -> "Sesión principal"
+                }
+                heading.addView(ui.text(label, 15f, bold = true), LinearLayout.LayoutParams(0, -2, 1f))
+                heading.addView(ui.chip(if (record.finishedAt.isBlank()) "Pendiente" else "Finalizada",
+                    if (record.finishedAt.isBlank()) ui.orange else ui.green,
+                    if (record.finishedAt.isBlank()) ui.getColor(R.color.orange_surface)
+                    else ui.getColor(R.color.completed_surface)))
+                ui.add(panel, heading)
+                ui.add(panel, ui.text(listOfNotNull(timing.range, timing.duration).joinToString(" · "),
+                    12f, ui.muted), 7)
+                ui.add(panel, ui.text("$completed de ${record.results.size} ejercicios completados  ›", 13f,
+                    if (record.finishedAt.isNotBlank()) ui.green else ui.orange, true), 8)
+                ui.add(body, ui.card(panel).apply { setOnClickListener { onOpenWorkout(record) } }, bottom = 8)
+            }
+        }
+
+        val legacy = document.workouts.filter { it.dayOfMonth == null }
+        if (legacy.isNotEmpty()) ui.add(body, ui.text("Sesiones anteriores sin fecha", 17f, bold = true),
+            top = if (historyDays.isEmpty()) 0 else 15, bottom = 9)
+        legacy.asReversed().forEach { record ->
             val panel = ui.col(14)
-            val title = if (record.kind == "extra") "SESIÓN EXTRA · ${record.day}" else record.day
-            ui.add(panel, ui.text(title, 15f, bold = true))
+            ui.add(panel, ui.text(record.day, 15f, bold = true))
             ui.add(panel, ui.text(record.startedAt.ifBlank { "Fecha desconocida" }, 12f, ui.muted), 5)
             val completed = record.results.values.count { it.done }
             ui.add(panel, ui.text("$completed de ${record.results.size} ejercicios completados", 13f,
                 if (record.finishedAt.isNotBlank()) ui.green else ui.muted), 6)
-            record.results.filterValues { it.weight.isNotBlank() }.forEach { (key, result) ->
-                val name = document.plan.exercises.firstOrNull { it.key() == key }?.exercise ?: key
-                ui.add(panel, ui.text("$name · ${result.weight} kg · ${result.actualReps} reps · RIR ${result.rir}",
-                    12f, ui.muted), 5)
-            }
-            ui.add(body, ui.card(panel), bottom = 8)
+            ui.add(body, ui.card(panel).apply { setOnClickListener { onOpenWorkout(record) } }, bottom = 8)
         }
     }
 

@@ -120,8 +120,8 @@ abstract class GymFitActivity : AppCompatActivity() {
         isAllCaps = false
         textSize = 15f
         typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
-        cornerRadius = dp(14)
-        minHeight = dp(52)
+        cornerRadius = dp(16)
+        minHeight = dp(54)
         insetTop = 0
         insetBottom = 0
         backgroundTintList = ColorStateList.valueOf(if (filled) red else cardSurface)
